@@ -22,13 +22,17 @@ final class ModelHarness {
     let store: Store
     let defaults: UserDefaults
     let pasteboard: NSPasteboard
+    let server: FakeJoplinServer
     private(set) var opened: [URL] = []
-    private(set) lazy var model: AppModel = AppModel(store: store, defaults: defaults, pasteboard: pasteboard) { [unowned self] in
+    private(set) lazy var model: AppModel = AppModel(store: store, defaults: defaults, pasteboard: pasteboard,
+                                                     syncTransport: server) { [unowned self] in
         self.opened.append($0)
     }
 
-    init(welcome: Bool = true, defaults configure: (UserDefaults) -> Void = { _ in }) throws {
-        store = try Store(directory: temporaryDirectory())
+    init(welcome: Bool = true, server: FakeJoplinServer = FakeJoplinServer(), directory: URL = temporaryDirectory(),
+         defaults configure: (UserDefaults) -> Void = { _ in }) throws {
+        self.server = server
+        store = try Store(directory: directory)
         if !welcome { store.setSetting("welcome_created", "1") }
         let suite = "jn-tests-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suite)!

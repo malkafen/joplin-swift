@@ -545,7 +545,7 @@ import Testing
 
     @Test func layoutMetadata() {
         #expect(EditorLayout.allCases.map(\.label) == ["Editor", "Split", "Preview"])
-        #expect(EditorLayout.allCases.map(\.symbol) == ["square.and.pencil", "rectangle.split.2x1", "eye"])
+        #expect(EditorLayout.allCases.map(\.symbol) == ["pencil.line", "rectangle.split.2x1", "eye"])
         #expect(EditorLayout.split.id == "split")
     }
 }

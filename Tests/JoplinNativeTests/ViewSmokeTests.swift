@@ -141,6 +141,36 @@ import Testing
         #expect(host.fittingSize.height > 0)
     }
 
+    @Test func syncStatesAndThemes() async throws {
+        let h = try ModelHarness()
+        let model = h.model
+        _ = render(SyncStatusBar().environment(model), size: CGSize(width: 220, height: 40))
+        model.syncInterval = 0
+        model.syncURL = "http://joplin.test"
+        model.syncEmail = "user@example.com"
+        model.syncPassword = "wrong"
+        await model.syncNow()
+        #expect(model.syncFailed)
+        _ = render(ContentView().environment(model))
+        model.syncPassword = "secret"
+        await model.syncNow()
+        _ = render(SettingsView().environment(model), size: CGSize(width: 480, height: 640))
+        model.theme = .system
+        let host = render(ContentView().environment(model))
+        #expect(host.fittingSize.width > 0)
+        model.theme = .black
+    }
+
+    @Test func snapshotImages() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 200, height: 120), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = NSHostingView(rootView: Text("Snapshot"))
+        #expect(Snapshot.cachedImage(window) != nil)
+        _ = Snapshot.windowServerImage(window)
+        window.close()
+    }
+
     @Test func previewLinkDelegate() throws {
         var clicked: [URL] = []
         let coordinator = MarkdownPreview.Coordinator { clicked.append($0) }
