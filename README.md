@@ -51,7 +51,7 @@ Joplin Server account, after a minute of idling:
 - **Sync with Joplin Server**: two-way, incremental (delta API), with sync locks, deletions, attachments and
   conflict copies for notes edited on two devices. Runs after edits, on an interval and with <kbd>⌘</kbd><kbd>S</kbd>.
 - **Interop**: import a Joplin Desktop profile, JEX archives and RAW / file-system sync folders. Export to JEX.
-- **Black theme** with deep tones (default), or follow the system appearance
+- **Black theme** (default): dark grey panels on a pure black backdrop, or follow the system appearance
 - **Mac conventions**: menu bar commands and shortcuts, a Settings window, and opening `.jex` files from Finder
 
 ### Keyboard shortcuts

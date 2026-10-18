@@ -30,35 +30,52 @@ enum AppTheme: String, CaseIterable, Identifiable {
     }
 }
 
-/// Surfaces of the black theme, darkest where the text is read.
+/// Surfaces of the black theme: a pure black backdrop with dark grey panels floating on it, separated by black
+/// gutters, so the sidebar, the note list and the editor read as distinct blocks.
 enum Palette {
-    static let sidebar = Color(nsColor: Palette.sidebarNS)
-    static let list = Color(nsColor: Palette.listNS)
-    static let editor = Color(nsColor: Palette.editorNS)
-    static let bar = Color(nsColor: Palette.barNS)
+    static let base = Color(nsColor: Palette.baseNS)
+    static let panel = Color(nsColor: Palette.panelNS)
+    static let elevated = Color(nsColor: Palette.elevatedNS)
 
-    static let sidebarNS = NSColor(srgbRed: 0.031, green: 0.031, blue: 0.039, alpha: 1)
-    static let listNS = NSColor(srgbRed: 0.047, green: 0.047, blue: 0.059, alpha: 1)
-    static let editorNS = NSColor(srgbRed: 0.016, green: 0.016, blue: 0.020, alpha: 1)
-    static let barNS = NSColor(srgbRed: 0.024, green: 0.024, blue: 0.031, alpha: 1)
+    static let baseNS = NSColor.black
+    static let panelNS = NSColor(srgbRed: 0.094, green: 0.094, blue: 0.094, alpha: 1)
+    static let elevatedNS = NSColor(srgbRed: 0.137, green: 0.137, blue: 0.137, alpha: 1)
+
+    /// Width of the black gutter between panels.
+    static let gap: CGFloat = 8
+    static let radius: CGFloat = 10
 }
 
 extension View {
-    /// Replaces the scroll view / material background with a solid colour when the black theme is active.
-    func surface(_ color: Color, _ theme: AppTheme) -> some View {
-        modifier(SurfaceModifier(color: color, enabled: theme == .black))
+    /// In the black theme, draws the view as a rounded grey panel on the black backdrop. `outer` are the window
+    /// edges this column touches: they get a full gutter, inner edges half a gutter so neighbours add up to one.
+    func panel(_ theme: AppTheme, outer: Edge.Set = []) -> some View {
+        modifier(PanelModifier(enabled: theme == .black, outer: outer))
     }
 }
 
-private struct SurfaceModifier: ViewModifier {
-    let color: Color
+private struct PanelModifier: ViewModifier {
     let enabled: Bool
+    let outer: Edge.Set
 
     func body(content: Content) -> some View {
         if enabled {
-            content.scrollContentBackground(.hidden).background(color)
+            content
+                .scrollContentBackground(.hidden)
+                .background(Palette.panel, in: shape)
+                .clipShape(shape)
+                .padding(.leading, inset(.leading))
+                .padding(.trailing, inset(.trailing))
+                .padding(.bottom, inset(.bottom))
+                .background(Palette.base)
         } else {
             content
         }
+    }
+
+    private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: Palette.radius, style: .continuous) }
+
+    private func inset(_ edge: Edge.Set) -> CGFloat {
+        outer.contains(edge) ? Palette.gap : Palette.gap / 2
     }
 }
