@@ -3,7 +3,7 @@
 # Joplin Native
 
 **A native macOS client for [Joplin](https://joplinapp.org) notes, written in Swift.**
-SwiftUI + AppKit, no Electron, no web view. About 100 MB of RAM instead of 1 GB+.
+SwiftUI + AppKit, no Electron, no web view. Syncs with Joplin Server. Under 100 MB of RAM instead of 500 MB+.
 
 [![CI](https://github.com/malkafen/joplin-swift/actions/workflows/ci.yml/badge.svg)](https://github.com/malkafen/joplin-swift/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/malkafen/joplin-swift?include_prereleases&sort=semver)](https://github.com/malkafen/joplin-swift/releases)
@@ -18,14 +18,23 @@ SwiftUI + AppKit, no Electron, no web view. About 100 MB of RAM instead of 1 GB+
 
 ## Why
 
-The official Joplin desktop app is an Electron application and easily takes 1–1.5 GB of memory.
-Joplin Native is built only from system frameworks. It uses the same data model as Joplin, so notes keep
-their ids, fields and text format and can be moved between the two apps.
+The official Joplin desktop app is an Electron application: six processes and half a gigabyte of memory
+for a small library. Joplin Native is built only from system frameworks. It uses the same data model as
+Joplin, so notes keep their ids, fields and text format, and both apps can sync with the same Joplin Server.
+
+Measured on macOS 27 (Apple M4 Pro VM, 8 GB), Joplin Desktop 3.7.21, both apps synced with the same
+Joplin Server account, after a minute of idling:
 
 | | Joplin Desktop (Electron) | Joplin Native |
 |---|---|---|
-| Memory (small library) | 1–1.5 GB | ~90–120 MB |
-| App size | hundreds of MB | ~3.5 MB |
+| Memory footprint, 39 notes | 467 MB (6 processes) | 84 MB (1 process) |
+| Memory footprint, 5000 notes | 590 MB | 94 MB |
+| Resident memory (RSS), 5000 notes | 1336 MB | 198 MB |
+| Threads | 122–132 | 4 |
+| CPU while idle | 0.2–0.5% | 0.0% |
+| Time until the window appears | 1.6 s | 0.55 s |
+| First sync of 5000 notes | 105 s | 121 s |
+| App size | 579 MB | 3.7 MB |
 | UI | HTML/CSS in Chromium | AppKit / SwiftUI controls |
 
 ## Features
@@ -39,8 +48,11 @@ their ids, fields and text format and can be moved between the two apps.
 - **Search**: full-text search over all notes with SQLite FTS5, works for any language
 - **Tags**: token field with completion of existing tags
 - **Attachments**: drop files or paste images. They are stored as Joplin resources and linked as `:/id`.
+- **Sync with Joplin Server**: two-way, incremental (delta API), with sync locks, deletions, attachments and
+  conflict copies for notes edited on two devices. Runs after edits, on an interval and with <kbd>⌘</kbd><kbd>S</kbd>.
 - **Interop**: import a Joplin Desktop profile, JEX archives and RAW / file-system sync folders. Export to JEX.
-- **Mac conventions**: menu bar commands and shortcuts, dark mode, a Settings window, and opening `.jex` files from Finder
+- **Black theme** with deep tones (default), or follow the system appearance
+- **Mac conventions**: menu bar commands and shortcuts, a Settings window, and opening `.jex` files from Finder
 
 ### Keyboard shortcuts
 
@@ -53,6 +65,7 @@ their ids, fields and text format and can be moved between the two apps.
 | Move to trash | <kbd>⌘</kbd><kbd>⌫</kbd> | Bulleted / numbered list | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>8</kbd> / <kbd>7</kbd> |
 | Editor / split / preview | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>1</kbd>–<kbd>3</kbd> | Checklist | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>9</kbd> |
 | Cycle layout | <kbd>⌃</kbd><kbd>L</kbd> | Insert date | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>T</kbd> |
+| Synchronise | <kbd>⌘</kbd><kbd>S</kbd> | | |
 
 ## Install
 
@@ -65,7 +78,9 @@ their ids, fields and text format and can be moved between the two apps.
    ```
 
 To bring in your existing notes, use **File → Import → From Joplin Desktop Profile**. It reads
-`~/.config/joplin-desktop` read-only.
+`~/.config/joplin-desktop` read-only. To sync, enter the Joplin Server URL, email and password in
+**Settings → Synchronisation**. The password is kept in the app's local database, not in the Keychain:
+ad-hoc signed builds would otherwise ask for Keychain access after every update.
 
 ## Status
 
@@ -77,9 +92,10 @@ This project is an independent client, not a port of the Electron app. What work
 | Markdown editing and native preview | ✅ |
 | Attachments (resources) | ✅ |
 | Import: Desktop profile, JEX, RAW. Export: JEX | ✅ |
-| Sync: Joplin Server / Cloud, WebDAV, Dropbox, OneDrive, file system | 🚧 planned |
-| End-to-end encryption | 🚧 planned (encrypted items are skipped on import) |
-| Note history (revisions), conflict resolution | 🚧 planned |
+| Sync: Joplin Server (self-hosted), conflict copies | ✅ |
+| Sync: Joplin Cloud, WebDAV, Dropbox, OneDrive, file system | 🚧 planned |
+| End-to-end encryption | 🚧 planned (encrypted items are skipped; sync refuses E2EE targets) |
+| Note history (revisions) | 🚧 planned |
 | Rich-text (WYSIWYG) editor, plugins, Web Clipper | ❌ not planned for now |
 
 ## Versioning follows upstream Joplin
@@ -109,10 +125,10 @@ scripts/build-app.sh --install     # also copy it to /Applications
 
 ```
 Sources/
-  JoplinCore/      data layer, no UI: SQLite, Joplin schema, item serializer, store, import/export
+  JoplinCore/      data layer, no UI: SQLite, Joplin schema, item serializer, store, import/export, sync
   JoplinNative/    the app: SwiftUI scenes and views, AppKit editor, preview renderer, menu commands
 Tests/
-  JoplinCoreTests/     serializer compatibility, store, search, interop
+  JoplinCoreTests/     serializer compatibility, store, search, interop, sync against an in-memory Joplin Server
   JoplinNativeTests/   app model, Markdown renderer, editor, off-screen view rendering
 ```
 
