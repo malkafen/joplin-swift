@@ -1,0 +1,77 @@
+name: Release
+
+# Releases mirror upstream Joplin: a tag is accepted only if laurent22/joplin has a release with the same name,
+# and the release is marked pre-release when upstream's is.
+on:
+  push:
+    tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing tag to (re)build, e.g. v3.7.21
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build & publish
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0
+
+      - name: Match upstream release
+        id: upstream
+        run: |
+          if ! info=$(gh api "repos/laurent22/joplin/releases/tags/$TAG" 2>/dev/null); then
+            echo "::error::$TAG is not a laurent22/joplin release. Tags must mirror upstream releases."
+            exit 1
+          fi
+          echo "prerelease=$(jq -r .prerelease <<<"$info")" >> "$GITHUB_OUTPUT"
+          echo "url=$(jq -r .html_url <<<"$info")" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        run: scripts/test.sh
+
+      - name: Build app bundle
+        run: |
+          VERSION="$TAG" scripts/build-app.sh
+          ZIP="Joplin-Native-$TAG-macos-arm64.zip"
+          ditto -c -k --keepParent "build/Joplin Native.app" "build/$ZIP"
+          (cd build && shasum -a 256 "$ZIP" > "$ZIP.sha256")
+          echo "ZIP=$ZIP" >> "$GITHUB_ENV"
+
+      - name: Publish GitHub release
+        run: |
+          previous=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
+          {
+            echo "Native macOS build matching upstream Joplin [$TAG](${{ steps.upstream.outputs.url }})."
+            echo
+            echo "The app is ad-hoc signed, not notarized: on first launch right-click it and choose **Open**,"
+            echo "or run \`xattr -dr com.apple.quarantine \"/Applications/Joplin Native.app\"\`."
+            echo
+            if [ -n "$previous" ]; then
+              echo "### Changes since $previous"
+              git log --no-merges --format='- %s (%h)' "$previous..$TAG"
+            else
+              echo "### Changes"
+              git log --no-merges --format='- %s (%h)' "$TAG"
+            fi
+          } > notes.md
+          flags=()
+          [ "${{ steps.upstream.outputs.prerelease }}" = "true" ] && flags+=(--prerelease)
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "build/$ZIP" "build/$ZIP.sha256" --clobber
+            gh release edit "$TAG" --notes-file notes.md "${flags[@]}"
+          else
+            gh release create "$TAG" "build/$ZIP" "build/$ZIP.sha256" --verify-tag \
+              --title "Joplin Native $TAG" --notes-file notes.md "${flags[@]}"
+          fi
