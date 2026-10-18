@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Build & test
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+
+      - uses: actions/cache@v6
+        with:
+          path: .build
+          key: spm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('Package.resolved') }}
+          restore-keys: spm-${{ runner.os }}-${{ runner.arch }}-
+
+      - name: Test with coverage
+        env:
+          MIN_COVERAGE: "90"
+        run: scripts/coverage.sh --lcov coverage.lcov
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-lcov
+          path: coverage.lcov
+          if-no-files-found: ignore
+
+      - name: Build app bundle
+        run: |
+          scripts/build-app.sh
+          ditto -c -k --keepParent "build/Joplin Native.app" "build/Joplin-Native-macos-arm64.zip"
+
+      - name: Upload app
+        uses: actions/upload-artifact@v7
+        with:
+          name: Joplin-Native-macos-arm64
+          path: build/Joplin-Native-macos-arm64.zip
