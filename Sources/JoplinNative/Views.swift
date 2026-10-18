@@ -16,7 +16,7 @@ struct ContentView: View {
             NoteEditorView()
         }
         .preferredColorScheme(model.theme.colorScheme)
-        .toolbarBackground(model.theme == .black ? AnyShapeStyle(Palette.bar) : AnyShapeStyle(.bar), for: .windowToolbar)
+        .toolbarBackground(model.theme == .black ? AnyShapeStyle(Palette.base) : AnyShapeStyle(.bar), for: .windowToolbar)
         .alert(model.alert?.title ?? "", isPresented: isPresented(\.alert), presenting: model.alert) { _ in
             Button("OK") {}
         } message: { info in
@@ -111,8 +111,8 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
-        .surface(Palette.sidebar, model.theme)
         .safeAreaInset(edge: .bottom, spacing: 0) { SyncStatusBar() }
+        .panel(model.theme, outer: [.leading, .bottom])
     }
 
     @ViewBuilder
@@ -187,7 +187,7 @@ struct SyncStatusBar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(model.theme == .black ? AnyShapeStyle(Palette.sidebar) : AnyShapeStyle(.clear))
+        .background(model.theme == .black ? AnyShapeStyle(Palette.panel) : AnyShapeStyle(.clear))
     }
 }
 
@@ -236,7 +236,6 @@ struct NoteListView: View {
                     }
                 }
                 .listStyle(.inset)
-                .surface(Palette.list, model.theme)
                 .contextMenu(forSelectionType: String.self) { ids in
                     noteMenu(ids)
                 }
@@ -244,7 +243,7 @@ struct NoteListView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(model.theme == .black ? Palette.list : .clear)
+        .panel(model.theme, outer: .bottom)
         .navigationTitle(model.listTitle)
         .navigationSubtitle(model.notes.count == 1 ? "1 note" : "\(model.notes.count) notes")
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search all notes")
@@ -382,7 +381,8 @@ struct NoteEditorView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(model.theme == .black ? Palette.editor : Color(nsColor: .textBackgroundColor))
+        .background(model.theme == .black ? Palette.panel : Color(nsColor: .textBackgroundColor))
+        .panel(model.theme, outer: [.trailing, .bottom])
         .toolbar {
             if model.currentNote != nil {
                 ToolbarItemGroup(placement: .primaryAction) {
