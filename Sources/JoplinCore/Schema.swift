@@ -51,7 +51,7 @@ private func n(_ name: String) -> FieldDef { FieldDef(name: name, type: .numeric
 /// Column layout mirrors the current Joplin schema (packages/lib/services/database/types.ts)
 /// so that items serialize to exactly the same set of properties.
 public enum Schema {
-    public static let version = 1
+    public static let version = 2
 
     public static let fields: [ModelType: [FieldDef]] = [
         .folder: [
@@ -142,10 +142,22 @@ public enum Schema {
     static func migrate(_ db: SQLiteDB) throws {
         let current = try db.scalarInt("PRAGMA user_version")
         if current < 1 {
+            try db.transaction { try db.exec(createSQL) }
+        }
+        if current < 2 {
+            // Last synced updated_time of each item; items without a row have never been uploaded.
             try db.transaction {
-                try db.exec(createSQL)
-                try db.exec("PRAGMA user_version = \(version)")
+                try db.exec("""
+                CREATE TABLE IF NOT EXISTS sync_items (
+                    item_id TEXT PRIMARY KEY,
+                    item_type INT NOT NULL,
+                    sync_time INT NOT NULL DEFAULT 0
+                );
+                """)
             }
+        }
+        if current < version {
+            try db.exec("PRAGMA user_version = \(version)")
         }
     }
 }

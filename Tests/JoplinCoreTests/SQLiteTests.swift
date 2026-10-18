@@ -141,6 +141,16 @@ import Testing
         #expect(second.folders().map(\.title) == ["Keep"])
     }
 
+    @Test func upgradesVersionOneDatabases() throws {
+        let dir = temporaryDirectory()
+        let old = try Store(directory: dir)
+        let folder = try old.createFolder(title: "Old")
+        try old.db.exec("DROP TABLE sync_items; PRAGMA user_version = 1")
+        let upgraded = try Store(directory: dir)
+        #expect(try upgraded.db.scalarInt("PRAGMA user_version") == 2)
+        #expect(try upgraded.itemsToUpload().map { $0.row.string("id") } == [folder.id])
+    }
+
     @Test func tablesMatchSchema() throws {
         let store = try makeStore()
         for type in ModelType.syncable {

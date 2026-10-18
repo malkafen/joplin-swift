@@ -29,6 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var model: AppModel = .shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        model.theme.apply()
         Snapshot.scheduleIfRequested(model: model)
     }
 
@@ -54,6 +55,12 @@ struct AppCommands: Commands {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("New Notebook…") { model.promptNewFolder() }
                 .keyboardShortcut("n", modifiers: [.command, .option])
+        }
+
+        CommandGroup(replacing: .saveItem) {
+            Button("Synchronise") { model.requestSync() }
+                .keyboardShortcut("s")
+                .disabled(!model.isSyncConfigured || model.isSyncing)
         }
 
         CommandGroup(replacing: .importExport) {
@@ -159,12 +166,29 @@ enum Snapshot {
         }
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
             if let window = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil }),
-               let view = window.contentView?.superview ?? window.contentView,
-               let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
-                view.cacheDisplay(in: view.bounds, to: rep)
+               let rep = windowServerImage(window) ?? cachedImage(window) {
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
             }
             if env["JN_SNAPSHOT_QUIT"] == "1" { quit() }
         }
+    }
+
+    /// The composited window (materials, toolbar), as the user sees it. Capturing the app's own windows needs no
+    /// screen-recording permission. The API is unavailable to Swift on macOS 15+, hence the dynamic lookup.
+    static func windowServerImage(_ window: NSWindow) -> NSBitmapImageRep? {
+        typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
+        guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }
+        let create = unsafeBitCast(symbol, to: CreateImage.self)
+        let includingWindow: UInt32 = 1 << 3, boundsIgnoreFraming: UInt32 = 1 << 0, bestResolution: UInt32 = 1 << 3
+        guard let image = create(.null, includingWindow, UInt32(window.windowNumber), boundsIgnoreFraming | bestResolution)?
+            .takeRetainedValue() else { return nil }
+        return NSBitmapImageRep(cgImage: image)
+    }
+
+    static func cachedImage(_ window: NSWindow) -> NSBitmapImageRep? {
+        guard let view = window.contentView?.superview ?? window.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { return nil }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        return rep
     }
 }

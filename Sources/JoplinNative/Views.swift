@@ -15,6 +15,8 @@ struct ContentView: View {
         } detail: {
             NoteEditorView()
         }
+        .preferredColorScheme(model.theme.colorScheme)
+        .toolbarBackground(model.theme == .black ? AnyShapeStyle(Palette.bar) : AnyShapeStyle(.bar), for: .windowToolbar)
         .alert(model.alert?.title ?? "", isPresented: isPresented(\.alert), presenting: model.alert) { _ in
             Button("OK") {}
         } message: { info in
@@ -55,42 +57,38 @@ struct SidebarView: View {
                 .badge(model.allNotesCount)
                 .tag(SidebarItem.allNotes)
 
-            Section {
-                OutlineGroup(model.folderTree, children: \.children) { node in
-                    FolderRow(folder: node.folder)
-                        .badge(model.folderCounts[node.id] ?? 0)
-                        .tag(SidebarItem.folder(node.id))
-                        .draggable("folder:\(node.id)")
-                        .dropDestination(for: String.self) { items, _ in
-                            model.dropOnFolder(items, folderId: node.id)
-                        }
-                        .contextMenu { folderMenu(node.folder) }
+            SidebarHeader(title: "Notebooks") {
+                Button {
+                    model.promptNewFolder()
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 11, weight: .semibold))
                 }
-            } header: {
-                HStack {
-                    Text("Notebooks")
-                    Spacer()
-                    Button {
-                        model.promptNewFolder()
-                    } label: {
-                        Image(systemName: "plus")
+                .buttonStyle(.borderless)
+                .help("New Notebook")
+            }
+
+            OutlineGroup(model.folderTree, children: \.children) { node in
+                FolderRow(folder: node.folder)
+                    .badge(model.folderCounts[node.id] ?? 0)
+                    .tag(SidebarItem.folder(node.id))
+                    .draggable("folder:\(node.id)")
+                    .dropDestination(for: String.self) { items, _ in
+                        model.dropOnFolder(items, folderId: node.id)
                     }
-                    .buttonStyle(.borderless)
-                    .help("New Notebook")
-                }
+                    .contextMenu { folderMenu(node.folder) }
             }
 
             if !model.tags.isEmpty {
-                Section("Tags") {
-                    ForEach(model.tags) { tag in
-                        Label(tag.title, systemImage: "tag")
-                            .badge(tag.noteCount)
-                            .tag(SidebarItem.tag(tag.id))
-                            .contextMenu {
-                                Button("Rename…") { model.promptRenameTag(tag) }
-                                Button("Delete Tag", role: .destructive) { model.deleteTag(tag) }
-                            }
-                    }
+                SidebarHeader(title: "Tags") { EmptyView() }
+                ForEach(model.tags) { tag in
+                    Label(tag.title, systemImage: "tag")
+                        .badge(tag.noteCount)
+                        .tag(SidebarItem.tag(tag.id))
+                        .contextMenu {
+                            Button("Rename…") { model.promptRenameTag(tag) }
+                            Button("Delete Tag", role: .destructive) { model.deleteTag(tag) }
+                        }
                 }
             }
 
@@ -113,6 +111,8 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .surface(Palette.sidebar, model.theme)
+        .safeAreaInset(edge: .bottom, spacing: 0) { SyncStatusBar() }
     }
 
     @ViewBuilder
@@ -130,6 +130,64 @@ struct SidebarView: View {
         }
         Divider()
         Button("Move to Trash", role: .destructive) { model.trashFolder(folder) }
+    }
+}
+
+/// Group title as a plain row: sidebar Section headers get a system collapse button on hover that collides with
+/// header buttons.
+struct SidebarHeader<Accessory: View>: View {
+    let title: String
+    @ViewBuilder var accessory: Accessory
+
+    var body: some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+            accessory
+        }
+        .padding(.top, 10)
+    }
+}
+
+struct SyncStatusBar: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        HStack(spacing: 8) {
+            if model.isSyncConfigured {
+                Button {
+                    model.requestSync()
+                } label: {
+                    Image(systemName: model.syncFailed ? "exclamationmark.arrow.triangle.2.circlepath" : "arrow.triangle.2.circlepath")
+                        .foregroundStyle(model.syncFailed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isSyncing)
+                .help("Synchronise (⌘S)")
+            } else {
+                SettingsLink {
+                    Image(systemName: "icloud.slash")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help("Set up synchronisation")
+            }
+            if model.isSyncing {
+                ProgressView().controlSize(.mini)
+            }
+            Text(model.syncStatusLine)
+                .font(.system(size: 11))
+                .foregroundStyle(model.syncFailed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(model.syncDetail.isEmpty ? model.syncStatusLine : model.syncDetail)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(model.theme == .black ? AnyShapeStyle(Palette.sidebar) : AnyShapeStyle(.clear))
     }
 }
 
@@ -178,12 +236,15 @@ struct NoteListView: View {
                     }
                 }
                 .listStyle(.inset)
+                .surface(Palette.list, model.theme)
                 .contextMenu(forSelectionType: String.self) { ids in
                     noteMenu(ids)
                 }
                 .onDeleteCommand { model.deleteSelectedNotes() }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(model.theme == .black ? Palette.list : .clear)
         .navigationTitle(model.listTitle)
         .navigationSubtitle(model.notes.count == 1 ? "1 note" : "\(model.notes.count) notes")
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search all notes")
@@ -320,6 +381,8 @@ struct NoteEditorView: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(model.theme == .black ? Palette.editor : Color(nsColor: .textBackgroundColor))
         .toolbar {
             if model.currentNote != nil {
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -449,7 +512,6 @@ struct NoteEditorView: View {
     private func previewPane(_ note: Note) -> some View {
         MarkdownPreview(markdown: note.body, noteId: note.id, fontSize: model.editorFontSize,
                         renderer: model.renderer, onLink: { model.handleLink($0) })
-            .background(Color(nsColor: .textBackgroundColor))
     }
 }
 
@@ -461,6 +523,49 @@ struct SettingsView: View {
     var body: some View {
         @Bindable var model = model
         Form {
+            Section("Appearance") {
+                Picker("Theme", selection: $model.theme) {
+                    ForEach(AppTheme.allCases) { Text($0.label).tag($0) }
+                }
+                .pickerStyle(.segmented)
+            }
+            Section {
+                TextField("Server URL", text: $model.syncURL, prompt: Text("https://joplin.example.com"))
+                    .textContentType(.URL)
+                TextField("Email", text: $model.syncEmail, prompt: Text("you@example.com"))
+                    .textContentType(.username)
+                SecureField("Password", text: $model.syncPassword)
+                    .textContentType(.password)
+                Picker("Sync automatically", selection: $model.syncInterval) {
+                    Text("Manually").tag(0)
+                    Text("Every minute").tag(1)
+                    Text("Every 5 minutes").tag(5)
+                    Text("Every 15 minutes").tag(15)
+                    Text("Every hour").tag(60)
+                }
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(model.syncStatusLine)
+                        if !model.syncDetail.isEmpty {
+                            Text(model.syncDetail).font(.caption).lineLimit(4)
+                        }
+                    }
+                    .foregroundStyle(model.syncFailed ? AnyShapeStyle(.orange) : AnyShapeStyle(.secondary))
+                    .textSelection(.enabled)
+                    Spacer()
+                    if model.isSyncing { ProgressView().controlSize(.small) }
+                    Button("Sync Now") {
+                        model.restartSyncTimer()
+                        model.requestSync()
+                    }
+                    .disabled(!model.isSyncConfigured || model.isSyncing)
+                }
+            } header: {
+                Text("Synchronisation (Joplin Server)")
+            } footer: {
+                Text("Uses the same sync target as the Joplin apps. End-to-end encrypted targets are not supported yet.")
+                    .foregroundStyle(.secondary)
+            }
             Section("Editor") {
                 LabeledContent("Font size") {
                     Stepper(value: $model.editorFontSize, in: 10...28, step: 1) {

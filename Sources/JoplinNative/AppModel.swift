@@ -32,7 +32,7 @@ enum EditorLayout: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
-        case .editor: return "square.and.pencil"
+        case .editor: return "pencil.line"
         case .split: return "rectangle.split.2x1"
         case .preview: return "eye"
         }
@@ -140,23 +140,76 @@ final class AppModel {
         didSet { defaults.set(editorMonospaced, forKey: "editorMonospaced") }
     }
 
+    var theme: AppTheme = .black {
+        didSet {
+            defaults.set(theme.rawValue, forKey: "theme")
+            theme.apply()
+        }
+    }
+
+    // Sync settings live in the database so that each data directory has its own sync target.
+    var syncURL = "" {
+        didSet { store.setSetting("sync.url", syncURL) }
+    }
+
+    var syncEmail = "" {
+        didSet { store.setSetting("sync.email", syncEmail) }
+    }
+
+    var syncPassword = "" {
+        didSet { store.setSetting("sync.password", syncPassword) }
+    }
+
+    /// Minutes between automatic syncs; 0 syncs only on demand.
+    var syncInterval = 5 {
+        didSet {
+            store.setSetting("sync.interval", String(syncInterval))
+            restartSyncTimer()
+        }
+    }
+
+    private(set) var isSyncing = false
+    private(set) var syncStatus = ""
+    /// Counts of the last run, or the full error message.
+    private(set) var syncDetail = ""
+    private(set) var syncFailed = false
+    private(set) var lastSyncTime: Int64 = 0
+
+    var isSyncConfigured: Bool {
+        !syncURL.trimmingCharacters(in: .whitespaces).isEmpty && !syncEmail.isEmpty && !syncPassword.isEmpty
+    }
+
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var pendingSave = false
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored let pasteboard: NSPasteboard
     @ObservationIgnored let openURL: (URL) -> Void
+    @ObservationIgnored let syncTransport: HTTPTransport
+    @ObservationIgnored private var syncTimer: Task<Void, Never>?
+    @ObservationIgnored private var autoSyncTask: Task<Void, Never>?
+    @ObservationIgnored private var syncRequestedWhileRunning = false
+    /// Delay between a local change and the automatic sync that sends it.
+    @ObservationIgnored var autoSyncDelay: Duration = .seconds(10)
 
     init(store: Store, defaults: UserDefaults = .standard, pasteboard: NSPasteboard = .general,
+         syncTransport: HTTPTransport = URLSessionTransport(),
          openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }) {
         self.store = store
         self.defaults = defaults
         self.pasteboard = pasteboard
+        self.syncTransport = syncTransport
         self.openURL = openURL
         sort = NoteSort(rawValue: defaults.string(forKey: "sort") ?? "") ?? .updated
         uncompletedTodosOnTop = defaults.object(forKey: "todosOnTop") as? Bool ?? true
         layout = EditorLayout(rawValue: defaults.string(forKey: "layout") ?? "") ?? .editor
         editorFontSize = defaults.object(forKey: "editorFontSize") as? Double ?? 14
         editorMonospaced = defaults.bool(forKey: "editorMonospaced")
+        theme = AppTheme(rawValue: defaults.string(forKey: "theme") ?? "") ?? .black
+        syncURL = store.setting("sync.url") ?? ""
+        syncEmail = store.setting("sync.email") ?? ""
+        syncPassword = store.setting("sync.password") ?? ""
+        syncInterval = Int(store.setting("sync.interval") ?? "") ?? 5
+        lastSyncTime = Int64(store.setting("sync.last_time") ?? "") ?? 0
         if store.setting("welcome_created") == nil {
             createWelcomeContent()
             store.setSetting("welcome_created", "1")
@@ -276,7 +329,13 @@ final class AppModel {
     private func reloadAll(select ids: Set<String>? = nil) {
         reloadSidebar()
         reloadNotes(selectFirst: ids == nil)
-        if let ids { selectedNoteIDs = ids }
+        guard let ids else { return }
+        let visible = ids.intersection(notes.map(\.id))
+        if !visible.isEmpty {
+            selectedNoteIDs = visible
+        } else if selectedNoteIDs.isEmpty, let first = notes.first {
+            selectedNoteIDs = [first.id]
+        }
     }
 
     // MARK: - Editing
@@ -325,6 +384,7 @@ final class AppModel {
     private func perform(_ body: () throws -> Void) {
         do {
             try body()
+            scheduleAutoSync()
         } catch {
             alert = AlertInfo(title: "Error", message: "\(error)")
         }
@@ -685,6 +745,81 @@ final class AppModel {
             alert = AlertInfo(title: "Export complete", message: "\(count) items written to \(url.lastPathComponent).")
         } catch {
             alert = AlertInfo(title: "Export failed", message: "\(error)")
+        }
+    }
+
+    // MARK: - Sync
+
+    var syncStatusLine: String {
+        if isSyncing { return "Syncing…" }
+        if !isSyncConfigured { return "Sync is off" }
+        if !syncStatus.isEmpty { return syncStatus }
+        return lastSyncTime > 0 ? "Synced \(shortDate(lastSyncTime))" : "Not synced yet"
+    }
+
+    func syncNow() async {
+        guard isSyncConfigured else {
+            syncFailed = true
+            syncStatus = "Sync is not set up"
+            syncDetail = SyncError.notConfigured.description
+            return
+        }
+        guard !isSyncing else {
+            syncRequestedWhileRunning = true
+            return
+        }
+        autoSyncTask?.cancel()
+        flushSave()
+        isSyncing = true
+        defer { isSyncing = false }
+        repeat {
+            syncRequestedWhileRunning = false
+            do {
+                let client = try JoplinServerClient(baseURL: syncURL, email: syncEmail, password: syncPassword, transport: syncTransport)
+                let report = try await SyncEngine(store: store, client: client).sync()
+                lastSyncTime = Store.now()
+                syncFailed = false
+                syncStatus = "Synced \(shortDate(lastSyncTime))"
+                syncDetail = report.description.prefix(1).uppercased() + report.description.dropFirst()
+                if report.downloaded + report.deletedLocally + report.conflicts > 0 {
+                    reloadAll(select: selectedNoteIDs)
+                }
+            } catch {
+                syncFailed = true
+                syncStatus = "Sync failed"
+                syncDetail = "\(error)"
+                syncRequestedWhileRunning = false
+            }
+        } while syncRequestedWhileRunning
+    }
+
+    func requestSync() {
+        Task { await syncNow() }
+    }
+
+    /// Sends local changes shortly after they are made.
+    private func scheduleAutoSync() {
+        guard isSyncConfigured, syncInterval > 0 else { return }
+        autoSyncTask?.cancel()
+        let delay = autoSyncDelay
+        autoSyncTask = Task { [weak self] in
+            try? await Task.sleep(for: delay)
+            guard !Task.isCancelled else { return }
+            await self?.syncNow()
+        }
+    }
+
+    /// Periodic sync to pick up changes made on other devices; also runs once at start-up.
+    func restartSyncTimer() {
+        syncTimer?.cancel()
+        syncTimer = nil
+        guard isSyncConfigured, syncInterval > 0 else { return }
+        let interval = Duration.seconds(syncInterval * 60)
+        syncTimer = Task { [weak self] in
+            while !Task.isCancelled {
+                await self?.syncNow()
+                try? await Task.sleep(for: interval)
+            }
         }
     }
 }

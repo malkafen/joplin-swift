@@ -147,11 +147,14 @@ public enum Snippet {
         ("\\s+", " "),
     ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
 
+    /// The regex results are autoreleased; the first note list is loaded before the run loop drains any pool.
     public static func make(from markdown: String) -> String {
-        var s = markdown
-        for (re, template) in patterns {
-            s = re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
+        autoreleasepool {
+            var s = markdown
+            for (re, template) in patterns {
+                s = re.stringByReplacingMatches(in: s, range: NSRange(s.startIndex..., in: s), withTemplate: template)
+            }
+            return s.trimmingCharacters(in: .whitespacesAndNewlines)
         }
-        return s.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }

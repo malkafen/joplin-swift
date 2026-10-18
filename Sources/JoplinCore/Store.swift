@@ -79,10 +79,11 @@ public final class Store {
 
     // MARK: - Folders
 
+    /// Sorted like Finder: case-insensitive, numbers by value ("Folder 2" before "Folder 10").
     public func folders(deleted: Bool = false) -> [Folder] {
         let clause = deleted ? "deleted_time > 0" : "deleted_time = 0 AND encryption_applied = 0"
-        let rows = (try? db.query("SELECT * FROM folders WHERE \(clause) ORDER BY title COLLATE NOCASE")) ?? []
-        return rows.map(Folder.init(row:))
+        let rows = (try? db.query("SELECT * FROM folders WHERE \(clause)")) ?? []
+        return rows.map(Folder.init(row:)).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
     }
 
     public func folder(id: String) -> Folder? {
