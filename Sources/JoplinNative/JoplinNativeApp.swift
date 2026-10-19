@@ -234,7 +234,16 @@ enum Snapshot {
                 }
             }
         }
-        if let fraction = Double(env["JN_SCROLL"] ?? "") {
+        if let keys = env["JN_VIM_KEYS"] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay * 0.8) {
+                MainActor.assumeIsolated {
+                    guard let content = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })?.contentView,
+                          let vim = editor(in: content)?.vim else { return }
+                    for c in keys { vim.handle(key: c == "\n" ? "\r" : String(c)) }
+                }
+            }
+        }
+                if let fraction = Double(env["JN_SCROLL"] ?? "") {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay * 0.75) {
                 MainActor.assumeIsolated {
                     if let content = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })?.contentView {
@@ -250,6 +259,12 @@ enum Snapshot {
             }
             if env["JN_SNAPSHOT_QUIT"] == "1" { quit() }
         }
+    }
+
+    static func editor(in view: NSView) -> MarkdownTextView? {
+        if let tv = view as? MarkdownTextView { return tv }
+        for sub in view.subviews { if let tv = editor(in: sub) { return tv } }
+        return nil
     }
 
     /// Scrolls the sidebar's list (the scroll view holding the notebook rows) by `offset` points from its top.

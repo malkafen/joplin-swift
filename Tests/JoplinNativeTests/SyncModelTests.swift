@@ -112,7 +112,17 @@ import Testing
         h.model.syncInterval = 0
     }
 
-    @Test func requestDuringSyncRunsAgain() async throws {
+    @Test func cancellingTheCallerDoesNotAbortSync() async throws {
+        let h = try ModelHarness()
+        configure(h.model)
+        let caller = Task { await h.model.syncNow() }
+        caller.cancel()
+        await caller.value
+        #expect(!h.model.syncFailed, "\(h.model.syncDetail)")
+        #expect(!h.server.itemNames.isEmpty)
+    }
+
+        @Test func requestDuringSyncRunsAgain() async throws {
         let h = try ModelHarness()
         configure(h.model)
         h.model.requestSync()

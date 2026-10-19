@@ -75,6 +75,8 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        // URLSession fails requests of a cancelled task with NSURLErrorCancelled (-999).
+        if Task.isCancelled { throw URLError(.cancelled) }
         let url = request.url!
         let (data, status) = lock.withLock { handle(request, url) }
         let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!

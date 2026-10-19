@@ -57,6 +57,16 @@ struct SidebarView: View {
 
             SidebarHeader(title: "Notebooks") {
                 Button {
+                    model.collapseAllFolders()
+                } label: {
+                    Image(systemName: "rectangle.compress.vertical")
+                        .font(.system(size: 11, weight: .semibold))
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.expandedFolders.isEmpty)
+                .help("Collapse All Notebooks")
+
+                Button {
                     model.promptNewFolder()
                 } label: {
                     Image(systemName: "plus")
@@ -569,6 +579,8 @@ struct NoteEditorView: View {
             highlights: model.searchTerms,
             vimMode: model.vimMode,
             onVimMode: { model.vimState = $0 },
+            // Reported after the update: loading a note clears the line while SwiftUI is updating the view.
+            onVimCommandLine: { line in Task { model.vimCommandLine = line } },
             isEditable: !inTrash,
             bridge: model.editor,
             onChange: { model.updateBody($0) },
@@ -585,6 +597,21 @@ struct NoteEditorView: View {
                     .background(model.vimState == .insert ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.accentColor),
                                 in: RoundedRectangle(cornerRadius: 5, style: .continuous))
                     .padding(10)
+                    .allowsHitTesting(false)
+            }
+        }
+        .overlay(alignment: .bottomLeading) {
+            if model.vimMode, !model.vimCommandLine.isEmpty {
+                Text(model.vimCommandLine)
+                    .font(.system(size: 11, design: .monospaced))
+                    .foregroundStyle(VimEngine.isError(model.vimCommandLine) ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .padding(10)
+                    .padding(.trailing, 90)
                     .allowsHitTesting(false)
             }
         }

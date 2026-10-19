@@ -2,8 +2,9 @@ import AppKit
 
 /// Vim key bindings for an `NSTextView`: normal, insert, visual and visual-line modes with counts, motions
 /// (h j k l w b e W B E 0 ^ $ gg G f F t T ; , { }), operators (d c y > < ~ with motions, doubled for lines,
-/// and in visual mode), x X D C Y s S r J p P o O i a I A u ⌃R, and / n N through the system find bar.
-/// Normal mode shows the character under the cursor selected, which reads as a block cursor.
+/// and in visual mode), x X D C Y s S r J p P o O i a I A u ⌃R, search with / ? n N * # (every match highlighted,
+/// smartcase) and the commands :<line> and :noh. Normal mode shows the character under the cursor selected, which
+/// reads as a block cursor.
 @MainActor
 final class VimEngine {
     enum Mode: Equatable {
@@ -21,9 +22,19 @@ final class VimEngine {
 
     weak var textView: NSTextView?
     var onModeChange: ((Mode) -> Void)?
+    /// The command line as Vim shows it at the bottom: "/text" while typing a search, then "[2/5]" or an error.
+    var onCommandLine: ((String) -> Void)?
+
+    private(set) var commandLine = "" {
+        didSet { if oldValue != commandLine { onCommandLine?(commandLine) } }
+    }
 
     private(set) var mode: Mode = .normal {
-        didSet { if oldValue != mode { onModeChange?(mode) } }
+        didSet {
+            guard oldValue != mode else { return }
+            if mode == .insert { commandLine = "" }
+            onModeChange?(mode)
+        }
     }
 
     private(set) var register = ""
@@ -41,8 +52,37 @@ final class VimEngine {
     private var insertStart: Int?
     private var insertTextHash = 0
 
+    struct Search: Equatable {
+        var pattern: String
+        var forward: Bool
+        /// "*" and "#" match whole words and ignore case.
+        var wholeWord = false
+    }
+
+    /// The last search, repeated by n and N.
+    private(set) var search: Search?
+    /// Matches of the last search stay highlighted until Esc or :noh.
+    private(set) var highlighting = false
+    /// Matches drawn with a highlight.
+    private(set) var highlightedRanges: [NSRange] = []
+    /// "/", "?" or ":" while the command line takes the keys.
+    private var prompt: Character?
+    private var typed = ""
+    private var promptOrigin = 0
+
+    nonisolated(unsafe) private var textObserver: NSObjectProtocol?
+
     init(textView: NSTextView? = nil) {
         self.textView = textView
+        // Keeps the search highlights on the matches while the text is edited.
+        textObserver = NotificationCenter.default.addObserver(forName: NSText.didChangeNotification, object: textView,
+                                                              queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.textDidChange() }
+        }
+    }
+
+    deinit {
+        if let textObserver { NotificationCenter.default.removeObserver(textObserver) }
     }
 
     // MARK: Text helpers
@@ -166,8 +206,11 @@ final class VimEngine {
     func reset() {
         pending = ""
         countText = ""
+        prompt = nil
+        commandLine = ""
         mode = .normal
         place(min(cursor, lastCursorPosition(cursor)))
+        refreshHighlights()
     }
 
     // MARK: Key handling
@@ -175,9 +218,10 @@ final class VimEngine {
     /// Handles a key press; returns false to let the text view process it.
     func handle(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .control, .option])
+        let bare = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        if prompt != nil { return handlePrompt(event, flags: flags, bare: bare) }
         if flags.contains(.command) { return false }
         if event.keyCode == 53 { return handle(key: "\u{1B}") } // Esc
-        let bare = event.charactersIgnoringModifiers?.lowercased() ?? ""
         if flags == .control, bare == "[" { return handle(key: "\u{1B}") }
         if mode == .insert { return false }
         if flags == .control {
@@ -199,7 +243,28 @@ final class VimEngine {
         return true
     }
 
-    /// Handles one typed character (Esc is "\u{1B}", ⌃R "\u{12}", ⌃D "\u{04}", ⌃U "\u{15}").
+    /// Keys typed into the command line; ⌘V pastes, other ⌘ shortcuts keep working.
+    private func handlePrompt(_ event: NSEvent, flags: NSEvent.ModifierFlags, bare: String) -> Bool {
+        if flags.contains(.command) {
+            guard bare == "v" else { return false }
+            let pasted = NSPasteboard.general.string(forType: .string)?.components(separatedBy: .newlines).first ?? ""
+            for c in pasted { handle(key: String(c)) }
+            return true
+        }
+        if event.keyCode == 53 || (flags == .control && bare == "[") { return handle(key: "\u{1B}") }
+        if flags == .control { return bare == "u" ? handle(key: "\u{15}") : true }
+        switch event.specialKey {
+        case .carriageReturn?, .enter?, .newline?: return handle(key: "\r")
+        case .delete?, .backspace?: return handle(key: "\u{7F}")
+        case nil: break
+        default: return true
+        }
+        for c in event.characters ?? "" { handle(key: String(c)) }
+        return true
+    }
+
+    /// Handles one typed character (Esc is "\u{1B}", ⌃R "\u{12}", ⌃D "\u{04}", ⌃U "\u{15}"; on the command line
+    /// Return is "\r" and Backspace "\u{7F}").
     @discardableResult
     func handle(key: String) -> Bool {
         changeStart = nil
@@ -224,9 +289,15 @@ final class VimEngine {
 
     private func process(_ key: String) -> Bool {
         guard let c = key.first else { return false }
+        if let kind = prompt {
+            promptKey(key, kind: kind)
+            return true
+        }
         if key == "\u{1B}" {
+            let wasIdle = pending.isEmpty && countText.isEmpty
             pending = ""
             countText = ""
+            commandLine = ""
             if mode == .insert {
                 let p = cursor
                 // Typing in insert mode is one change for undo.
@@ -238,6 +309,8 @@ final class VimEngine {
                 mode = .normal
                 place(p > lineStart(p) ? p - 1 : p)
             } else {
+                // Esc in normal mode also hides the search highlights, like the usual ":noh" mapping.
+                if mode == .normal, wasIdle { clearHighlights() }
                 setMode(.normal)
             }
             textView?.breakUndoCoalescing()
@@ -371,8 +444,9 @@ final class VimEngine {
         case "p", "P": put(after: c == "p", count: count)
         case "J": joinLines(max(count, 2) - 1)
         case "~": toggleCase(count)
-        case "/", "?": showFind()
-        case "n", "N": findNext(forward: c == "n")
+        case "/", "?", ":": openPrompt(c)
+        case "n", "N": repeatSearch(reversed: c == "N", count: count)
+        case "*", "#": searchWord(forward: c == "*", count: count)
         case "\u{04}", "\u{15}": motion(c == "\u{04}" ? "j" : "k", count: 15 * count, operator: nil)
         default: motion(c, count: count, operator: nil)
         }
@@ -761,19 +835,188 @@ final class VimEngine {
         place(p)
     }
 
-    // MARK: Search
+    // MARK: Search and command line
 
-    private func showFind() {
-        guard let tv = textView else { return }
-        let item = NSMenuItem()
-        item.tag = NSTextFinder.Action.showFindInterface.rawValue
-        tv.performTextFinderAction(item)
+    private func openPrompt(_ kind: Character) {
+        prompt = kind
+        typed = ""
+        promptOrigin = position
+        commandLine = String(kind)
     }
 
-    private func findNext(forward: Bool) {
-        guard let tv = textView else { return }
-        let item = NSMenuItem()
-        item.tag = (forward ? NSTextFinder.Action.nextMatch : .previousMatch).rawValue
-        tv.performTextFinderAction(item)
+    private func promptKey(_ key: String, kind: Character) {
+        switch key {
+        case "\u{1B}":
+            closePrompt(restore: true)
+            return
+        case "\r":
+            prompt = nil
+            if kind == ":" { runCommand(typed.trimmingCharacters(in: .whitespaces)) } else { commitSearch(kind) }
+            return
+        case "\u{7F}":
+            guard !typed.isEmpty else {
+                closePrompt(restore: true)
+                return
+            }
+            typed.removeLast()
+        case "\u{15}":
+            typed = ""
+        default:
+            typed += key
+        }
+        commandLine = String(kind) + typed
+        if kind != ":" { previewSearch(Search(pattern: typed, forward: kind == "/")) }
     }
+
+    private func closePrompt(restore: Bool) {
+        prompt = nil
+        commandLine = ""
+        if restore {
+            place(promptOrigin)
+            refreshHighlights()
+        }
+    }
+
+    /// While typing: every match lit, the cursor on the next one (Vim's incsearch).
+    private func previewSearch(_ s: Search) {
+        let ranges = matches(s)
+        guard let next = nextMatch(in: ranges, from: promptOrigin, forward: s.forward, count: 1) else {
+            place(promptOrigin)
+            if s.pattern.isEmpty { refreshHighlights() } else { showHighlights([], current: nil) }
+            return
+        }
+        place(next.range.location)
+        showHighlights(ranges, current: next.range)
+    }
+
+    private func commitSearch(_ kind: Character) {
+        // An empty pattern repeats the last one, as in Vim.
+        if !typed.isEmpty { search = Search(pattern: typed, forward: kind == "/") }
+        else if search != nil { search!.forward = kind == "/" }
+        guard search != nil else {
+            closePrompt(restore: true)
+            return
+        }
+        highlighting = true
+        jumpToMatch(from: promptOrigin, reversed: false, count: 1)
+    }
+
+    private func repeatSearch(reversed: Bool, count: Int) {
+        guard search != nil else {
+            commandLine = "E35: No previous regular expression"
+            NSSound.beep()
+            return
+        }
+        highlighting = true
+        jumpToMatch(from: position, reversed: reversed, count: count)
+    }
+
+    /// "*" and "#": the word under (or after) the cursor.
+    private func searchWord(forward: Bool, count: Int) {
+        var p = position
+        let end = lineEnd(p)
+        while p < end, wordClass(p, big: false) != .word { p += 1 }
+        guard p < end else {
+            commandLine = "E348: No string under cursor"
+            NSSound.beep()
+            return
+        }
+        var lo = p, hi = p
+        while lo > lineStart(p), wordClass(lo - 1, big: false) == .word { lo -= 1 }
+        while hi < end, wordClass(hi, big: false) == .word { hi += 1 }
+        search = Search(pattern: text.substring(with: NSRange(location: lo, length: hi - lo)), forward: forward, wholeWord: true)
+        highlighting = true
+        jumpToMatch(from: forward ? p : lo, reversed: false, count: count)
+    }
+
+    private func jumpToMatch(from origin: Int, reversed: Bool, count: Int) {
+        guard let s = search else { return }
+        let forward = s.forward != reversed
+        let ranges = matches(s)
+        let prefix = s.forward ? "/" : "?"
+        guard let next = nextMatch(in: ranges, from: origin, forward: forward, count: count) else {
+            place(origin)
+            showHighlights([], current: nil)
+            commandLine = "E486: Pattern not found: \(s.pattern)"
+            NSSound.beep()
+            return
+        }
+        place(next.range.location)
+        showHighlights(ranges, current: next.range)
+        var line = "\(prefix)\(s.pattern)  [\(next.index + 1)/\(ranges.count)]"
+        if next.wrapped { line += forward ? "  search hit BOTTOM, continuing at TOP" : "  search hit TOP, continuing at BOTTOM" }
+        commandLine = line
+    }
+
+    private func nextMatch(in ranges: [NSRange], from origin: Int, forward: Bool, count: Int)
+        -> (range: NSRange, index: Int, wrapped: Bool)? {
+        guard !ranges.isEmpty else { return nil }
+        var index = forward ? -1 : ranges.count
+        var p = origin
+        var wrapped = false
+        for _ in 0..<max(count, 1) {
+            if forward {
+                if let i = ranges.firstIndex(where: { $0.location > p }) { index = i } else { index = 0; wrapped = true }
+            } else {
+                if let i = ranges.lastIndex(where: { $0.location < p }) { index = i } else { index = ranges.count - 1; wrapped = true }
+            }
+            p = ranges[index].location
+        }
+        return (ranges[index], index, wrapped)
+    }
+
+    /// Literal matches; lower-case patterns ignore case (smartcase).
+    func matches(_ s: Search) -> [NSRange] {
+        guard !s.pattern.isEmpty, length > 0 else { return [] }
+        var pattern = NSRegularExpression.escapedPattern(for: s.pattern)
+        if s.wholeWord { pattern = "(?<![\\p{L}\\p{N}_])" + pattern + "(?![\\p{L}\\p{N}_])" }
+        let ignoreCase = s.wholeWord || s.pattern == s.pattern.lowercased()
+        guard let re = try? NSRegularExpression(pattern: pattern, options: ignoreCase ? [.caseInsensitive] : []) else { return [] }
+        return re.matches(in: text as String, range: NSRange(location: 0, length: length)).map(\.range)
+    }
+
+    private func runCommand(_ command: String) {
+        commandLine = ""
+        if command.isEmpty { return }
+        if let line = Int(command) {
+            jump(toLine: line - 1, operator: nil)
+        } else if command == "$" {
+            jump(toLine: lineNumber(length), operator: nil)
+        } else if ["noh", "nohl", "nohlsearch"].contains(command) {
+            clearHighlights()
+        } else if ["w", "wa", "up", "update"].contains(command) {
+            // Notes save themselves.
+        } else {
+            commandLine = "E492: Not an editor command: \(command)"
+            NSSound.beep()
+        }
+    }
+
+    private func textDidChange() {
+        if highlighting, prompt == nil { refreshHighlights() }
+    }
+
+    private func refreshHighlights() {
+        if highlighting, let search { showHighlights(matches(search), current: nil) } else { showHighlights([], current: nil) }
+    }
+
+    func clearHighlights() {
+        highlighting = false
+        showHighlights([], current: nil)
+    }
+
+    /// Highlights are temporary layout attributes: they do not touch the note text, its undo or its styling.
+    private func showHighlights(_ ranges: [NSRange], current: NSRange?) {
+        highlightedRanges = ranges
+        guard let lm = textView?.layoutManager else { return }
+        lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: NSRange(location: 0, length: length))
+        for r in ranges { lm.addTemporaryAttribute(.backgroundColor, value: SearchHighlight.color, forCharacterRange: r) }
+        if let current { lm.addTemporaryAttribute(.backgroundColor, value: Self.currentMatchColor, forCharacterRange: current) }
+    }
+
+    /// Vim errors read "E486: …".
+    static func isError(_ line: String) -> Bool { line.first == "E" && line.dropFirst().first?.isNumber == true }
+
+    static var currentMatchColor: NSColor { NSColor.systemOrange.withAlphaComponent(0.6) }
+
 }
