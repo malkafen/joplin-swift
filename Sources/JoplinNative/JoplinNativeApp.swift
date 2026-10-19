@@ -252,13 +252,14 @@ enum Snapshot {
         }
     }
 
-    /// Scrolls the sidebar's list (the leftmost table) by `offset` points from its top.
+    /// Scrolls the sidebar's list (the scroll view holding the notebook rows) by `offset` points from its top.
     static func scrollSidebar(in view: NSView, to offset: Double) {
-        func tables(_ v: NSView) -> [NSScrollView] {
-            ((v as? NSScrollView).flatMap { $0.documentView is NSTableView ? [$0] : nil } ?? []) + v.subviews.flatMap(tables)
+        func find(_ v: NSView) -> FolderMarkerView? {
+            if let marker = v as? FolderMarkerView { return marker }
+            for sub in v.subviews { if let m = find(sub) { return m } }
+            return nil
         }
-        guard let scroll = tables(view).min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX })
-        else { return }
+        guard let scroll = find(view)?.enclosingScrollView else { return }
         scroll.contentView.scroll(to: NSPoint(x: 0, y: CGFloat(offset) - scroll.contentInsets.top))
         scroll.reflectScrolledClipView(scroll.contentView)
     }

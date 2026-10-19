@@ -22,6 +22,13 @@ APP="build/$APP_NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/$EXEC" "$APP/Contents/MacOS/$EXEC"
+# Record the SDK the app was built with. The SwiftPM build system of some toolchains writes the deployment
+# target there instead, and macOS then runs the app with the look of that old system.
+SDK_VERSION=$(xcrun --show-sdk-version)
+MIN_VERSION=$(otool -l "$APP/Contents/MacOS/$EXEC" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
+xcrun vtool -set-build-version macos "${MIN_VERSION:-14.0}" "$SDK_VERSION" -replace \
+  -output "$APP/Contents/MacOS/$EXEC.tmp" "$APP/Contents/MacOS/$EXEC"
+mv "$APP/Contents/MacOS/$EXEC.tmp" "$APP/Contents/MacOS/$EXEC"
 for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
 
 if [ ! -f build/AppIcon.icns ] || [ Tools/make-icon.swift -nt build/AppIcon.icns ]; then

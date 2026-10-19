@@ -227,6 +227,9 @@ struct SyncStatusBar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
+        // The list scrolls under this bar; without a background the last rows show through the text.
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
     }
 }
 
