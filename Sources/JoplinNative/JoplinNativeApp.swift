@@ -85,14 +85,20 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .sidebar) {
-            Button("Editor Only") { model.layout = .editor }
-                .keyboardShortcut("1", modifiers: [.command, .control])
-            Button("Editor and Preview") { model.layout = .split }
-                .keyboardShortcut("2", modifiers: [.command, .control])
-            Button("Preview Only") { model.layout = .preview }
-                .keyboardShortcut("3", modifiers: [.command, .control])
-            Button("Toggle Editor Layout") { model.cycleLayout() }
-                .keyboardShortcut("l", modifiers: .control)
+            Button(ShortcutAction.editorOnly.title) { model.layout = .editor }
+                .keyboardShortcut(model.hotkey(for: .editorOnly))
+            Button(ShortcutAction.split.title) { model.layout = .split }
+                .keyboardShortcut(model.hotkey(for: .split))
+            Button(ShortcutAction.previewOnly.title) { model.layout = .preview }
+                .keyboardShortcut(model.hotkey(for: .previewOnly))
+            Button(ShortcutAction.cycleLayout.title) { model.cycleLayout() }
+                .keyboardShortcut(model.hotkey(for: .cycleLayout))
+            Divider()
+            Button("Expand All Notebooks") { model.expandAllFolders() }
+            Button("Collapse All Notebooks") { model.collapseAllFolders() }
+            Divider()
+            Toggle("Vim Mode", isOn: Binding(get: { model.vimMode }, set: { model.vimMode = $0 }))
+                .keyboardShortcut("v", modifiers: [.command, .control, .option])
             Divider()
             Toggle("Show Tags in Sidebar", isOn: Binding(get: { model.showSidebarTags }, set: { model.showSidebarTags = $0 }))
                 .keyboardShortcut("t", modifiers: [.command, .control])
@@ -206,6 +212,17 @@ enum Snapshot {
             }
         }
         if let query = env["JN_SEARCH"] { model.searchText = query }
+        if env["JN_VIM"] == "1" { model.vimMode = true }
+        if env["JN_EXPAND_ALL"] == "1" { model.expandAllFolders() }
+        if let offset = Double(env["JN_SIDEBAR_SCROLL"] ?? "") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay * 0.7) {
+                MainActor.assumeIsolated {
+                    if let content = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })?.contentView {
+                        scrollSidebar(in: content, to: offset)
+                    }
+                }
+            }
+        }
         if let layout = env["JN_LAYOUT"].flatMap(EditorLayout.init(rawValue:)) { model.layout = layout }
         if let appearance = env["JN_APPEARANCE"] {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
@@ -233,6 +250,17 @@ enum Snapshot {
             }
             if env["JN_SNAPSHOT_QUIT"] == "1" { quit() }
         }
+    }
+
+    /// Scrolls the sidebar's list (the leftmost table) by `offset` points from its top.
+    static func scrollSidebar(in view: NSView, to offset: Double) {
+        func tables(_ v: NSView) -> [NSScrollView] {
+            ((v as? NSScrollView).flatMap { $0.documentView is NSTableView ? [$0] : nil } ?? []) + v.subviews.flatMap(tables)
+        }
+        guard let scroll = tables(view).min(by: { $0.convert($0.bounds, to: nil).minX < $1.convert($1.bounds, to: nil).minX })
+        else { return }
+        scroll.contentView.scroll(to: NSPoint(x: 0, y: CGFloat(offset) - scroll.contentInsets.top))
+        scroll.reflectScrolledClipView(scroll.contentView)
     }
 
     /// Scrolls every text scroll view to `fraction` of its height (0 top, 1 bottom).

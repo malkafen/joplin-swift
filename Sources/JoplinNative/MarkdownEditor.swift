@@ -87,6 +87,18 @@ final class MarkdownTextView: NSTextView, ReadableWidth {
         didSet { if oldValue != maxLineWidth { updateReadableInset() } }
     }
     let minimumInset = NSSize(width: 24, height: 18)
+    /// Vim key bindings, when enabled.
+    var vim: VimEngine?
+
+    override func keyDown(with event: NSEvent) {
+        if let vim, vim.handle(event) { return }
+        super.keyDown(with: event)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        super.mouseDown(with: event)
+        vim?.normalizeSelection()
+    }
 
     override func setFrameSize(_ newSize: NSSize) {
         let changed = newSize.width != frame.width
@@ -136,6 +148,8 @@ struct MarkdownEditor: NSViewRepresentable {
     var typography: Typography
     var readableWidth: Bool
     var highlights: [String] = []
+    var vimMode = false
+    var onVimMode: (VimEngine.Mode) -> Void = { _ in }
     var isEditable: Bool
     var bridge: EditorBridge
     var onChange: (String) -> Void
@@ -181,8 +195,23 @@ struct MarkdownEditor: NSViewRepresentable {
         scroll.documentView = tv
         context.coordinator.textView = tv
         bridge.textView = tv
+        configureVim(tv)
         load(into: tv, context: context)
         return scroll
+    }
+
+    private func configureVim(_ tv: MarkdownTextView) {
+        if vimMode, tv.vim == nil {
+            let engine = VimEngine(textView: tv)
+            let report = onVimMode
+            engine.onModeChange = { report($0) }
+            tv.vim = engine
+            engine.reset()
+            report(engine.mode)
+        } else if !vimMode, let engine = tv.vim {
+            tv.vim = nil
+            if engine.mode != .insert { tv.setSelectedRange(NSRange(location: tv.selectedRange().location, length: 0)) }
+        }
     }
 
     private func load(into tv: NSTextView, context: Context) {
@@ -198,6 +227,7 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.scrollToBeginningOfDocument(nil)
         c.noteId = noteId
         c.typography = typography
+        (tv as? MarkdownTextView)?.vim?.reset()
         c.revealFirstMatch()
     }
 
@@ -208,6 +238,7 @@ struct MarkdownEditor: NSViewRepresentable {
         bridge.textView = tv
         tv.isEditable = isEditable
         tv.maxLineWidth = readableWidth ? typography.readableWidth : nil
+        configureVim(tv)
         if c.noteId != noteId {
             load(into: tv, context: context)
         } else if c.highlighter.searchTerms != highlights {

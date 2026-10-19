@@ -71,6 +71,8 @@ final class AppModel {
 
     let store: Store
     @ObservationIgnored let editor = EditorBridge()
+    /// Pinned parent notebooks while the sidebar scrolls.
+    @ObservationIgnored let sticky = StickyFolders()
 
     private(set) var folders: [Folder] = []
     private(set) var folderTree: [FolderNode] = []
@@ -174,6 +176,45 @@ final class AppModel {
         didSet { defaults.set(sidebarTagsExpanded, forKey: "sidebarTagsExpanded") }
     }
 
+    /// Notebooks expanded in the sidebar, remembered between launches.
+    var expandedFolders: Set<String> = [] {
+        didSet { defaults.set(Array(expandedFolders).sorted(), forKey: "expandedFolders") }
+    }
+
+    func expansion(of id: String) -> Binding<Bool> {
+        Binding(get: { self.expandedFolders.contains(id) },
+                set: { expanded in
+                    if expanded { self.expandedFolders.insert(id) } else { self.expandedFolders.remove(id) }
+                })
+    }
+
+    func expandAllFolders() {
+        expandedFolders = Set(folders.filter { f in folders.contains { $0.parentId == f.id } }.map(\.id))
+    }
+
+    func collapseAllFolders() {
+        expandedFolders = []
+    }
+
+    /// Parent notebooks stay at the top of the sidebar while scrolling.
+    var stickyNotebooks = true {
+        didSet {
+            defaults.set(stickyNotebooks, forKey: "stickyNotebooks")
+            sticky.enabled = stickyNotebooks
+        }
+    }
+
+    /// Vim key bindings in the editor.
+    var vimMode = false {
+        didSet {
+            defaults.set(vimMode, forKey: "vimMode")
+            if !vimMode { vimState = .insert }
+        }
+    }
+
+    /// Mode shown in the editor's status label.
+    var vimState: VimEngine.Mode = .normal
+
     /// Whether notebooks in the trash are listed under it in the sidebar.
     var trashExpanded = false {
         didSet { defaults.set(trashExpanded, forKey: "trashExpanded") }
@@ -181,6 +222,73 @@ final class AppModel {
 
     var showNoteTags = true {
         didSet { defaults.set(showNoteTags, forKey: "showNoteTags") }
+    }
+
+    // MARK: Shortcuts
+
+    /// User shortcuts; a missing entry means the default, `nil` inside means cleared.
+    private(set) var shortcuts: [ShortcutAction: Hotkey?] = [:]
+    private(set) var recordingShortcut: ShortcutAction?
+    @ObservationIgnored private var shortcutMonitor: Any?
+
+    func hotkey(for action: ShortcutAction) -> Hotkey? {
+        if let custom = shortcuts[action] { return custom }
+        return action.defaultHotkey
+    }
+
+    func setHotkey(_ hotkey: Hotkey?, for action: ShortcutAction) {
+        shortcuts[action] = .some(hotkey)
+        defaults.set(hotkey?.storage ?? "", forKey: action.defaultsKey)
+    }
+
+    func resetShortcut(_ action: ShortcutAction) {
+        shortcuts[action] = nil
+        defaults.removeObject(forKey: action.defaultsKey)
+    }
+
+    /// Title of another command that uses the same keys.
+    func shortcutConflict(for action: ShortcutAction) -> String? {
+        guard let key = hotkey(for: action) else { return nil }
+        if let other = ShortcutAction.allCases.first(where: { $0 != action && hotkey(for: $0) == key }) { return other.title }
+        return ShortcutAction.reserved[key]
+    }
+
+    func startRecordingShortcut(_ action: ShortcutAction) {
+        stopRecordingShortcut()
+        recordingShortcut = action
+        shortcutMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            return self.recordShortcut(event) ? nil : event
+        }
+    }
+
+    func stopRecordingShortcut() {
+        if let monitor = shortcutMonitor { NSEvent.removeMonitor(monitor) }
+        shortcutMonitor = nil
+        recordingShortcut = nil
+    }
+
+    /// Handles a key press while recording; returns whether it was used.
+    @discardableResult
+    func recordShortcut(_ event: NSEvent) -> Bool {
+        guard let action = recordingShortcut else { return false }
+        let plain = event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
+        if event.keyCode == 53 && plain { // Esc
+            stopRecordingShortcut()
+            return true
+        }
+        if (event.keyCode == 51 || event.keyCode == 117) && plain { // ⌫ / ⌦ clear
+            setHotkey(nil, for: action)
+            stopRecordingShortcut()
+            return true
+        }
+        guard let hotkey = Hotkey(event: event) else {
+            NSSound.beep()
+            return true
+        }
+        setHotkey(hotkey, for: action)
+        stopRecordingShortcut()
+        return true
     }
 
     static let fontSizes: ClosedRange<Double> = 9...36
@@ -274,6 +382,14 @@ final class AppModel {
         sidebarTagsExpanded = defaults.object(forKey: "sidebarTagsExpanded") as? Bool ?? true
         showNoteTags = defaults.object(forKey: "showNoteTags") as? Bool ?? true
         trashExpanded = defaults.bool(forKey: "trashExpanded")
+        vimMode = defaults.bool(forKey: "vimMode")
+        stickyNotebooks = defaults.object(forKey: "stickyNotebooks") as? Bool ?? true
+        expandedFolders = Set(defaults.stringArray(forKey: "expandedFolders") ?? [])
+        for action in ShortcutAction.allCases {
+            if let stored = defaults.string(forKey: action.defaultsKey) {
+                shortcuts[action] = .some(Hotkey(storage: stored))
+            }
+        }
         syncURL = store.setting("sync.url") ?? ""
         syncEmail = store.setting("sync.email") ?? ""
         syncPassword = store.setting("sync.password") ?? ""
@@ -313,6 +429,7 @@ final class AppModel {
         folders = store.folders()
         trashedFolders = store.folders(deleted: true)
         folderTree = Self.buildTree(folders)
+        sticky.parentOf = Dictionary(folders.map { ($0.id, $0.parentId) }, uniquingKeysWith: { a, _ in a })
         flatFolders = Self.flatten(folderTree)
         tags = store.tags()
         folderCounts = store.noteCountsByFolder()
@@ -361,6 +478,11 @@ final class AppModel {
         case .trash: return "Trash"
         default: return "All Notes"
         }
+    }
+
+    /// "Parent › Child › Notebook" for tooltips.
+    func folderPath(_ id: String) -> String {
+        (StickyFolders.ancestors(of: id, parentOf: sticky.parentOf) + [id]).map(folderTitle).joined(separator: " › ")
     }
 
     func folderTitle(_ id: String) -> String {
