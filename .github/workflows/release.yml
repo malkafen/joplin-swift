@@ -1,14 +1,15 @@
 name: Release
 
 # Releases mirror upstream Joplin: a tag is accepted only if laurent22/joplin has a release with the same name,
-# and the release is marked pre-release when upstream's is.
+# and the release is marked pre-release when upstream's is. Native-only revisions between upstream releases are
+# tagged vX.Y.Z-N, where vX.Y.Z must be an upstream release.
 on:
   push:
     tags: ["v*.*.*"]
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to (re)build, e.g. v3.7.21
+        description: Existing tag to (re)build, e.g. v3.7.21 or v3.7.21-1
         required: true
 
 permissions:
@@ -31,10 +32,13 @@ jobs:
       - name: Match upstream release
         id: upstream
         run: |
-          if ! info=$(gh api "repos/laurent22/joplin/releases/tags/$TAG" 2>/dev/null); then
-            echo "::error::$TAG is not a laurent22/joplin release. Tags must mirror upstream releases."
+          base="$TAG"
+          if [[ "$TAG" =~ ^(v[0-9]+\.[0-9]+\.[0-9]+)-([0-9]+)$ ]]; then base="${BASH_REMATCH[1]}"; fi
+          if ! info=$(gh api "repos/laurent22/joplin/releases/tags/$base" 2>/dev/null); then
+            echo "::error::$base is not a laurent22/joplin release. Tags must mirror upstream releases (vX.Y.Z or vX.Y.Z-N)."
             exit 1
           fi
+          echo "base=$base" >> "$GITHUB_OUTPUT"
           echo "prerelease=$(jq -r .prerelease <<<"$info")" >> "$GITHUB_OUTPUT"
           echo "url=$(jq -r .html_url <<<"$info")" >> "$GITHUB_OUTPUT"
 
@@ -53,7 +57,7 @@ jobs:
         run: |
           previous=$(git tag --list 'v*.*.*' --sort=-v:refname | grep -vx "$TAG" | head -1 || true)
           {
-            echo "Native macOS build matching upstream Joplin [$TAG](${{ steps.upstream.outputs.url }})."
+            echo "Native macOS build matching upstream Joplin [${{ steps.upstream.outputs.base }}](${{ steps.upstream.outputs.url }})."
             echo
             echo "The app is ad-hoc signed, not notarized: on first launch right-click it and choose **Open**,"
             echo "or run \`xattr -dr com.apple.quarantine \"/Applications/Joplin Native.app\"\`."
@@ -67,7 +71,7 @@ jobs:
             fi
           } > notes.md
           flags=()
-          [ "${{ steps.upstream.outputs.prerelease }}" = "true" ] && flags+=(--prerelease)
+          if [ "${{ steps.upstream.outputs.prerelease }}" = "true" ]; then flags+=(--prerelease); else flags+=(--latest); fi
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "build/$ZIP" "build/$ZIP.sha256" --clobber
             gh release edit "$TAG" --notes-file notes.md "${flags[@]}"

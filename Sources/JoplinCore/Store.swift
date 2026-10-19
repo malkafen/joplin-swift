@@ -204,6 +204,16 @@ public final class Store {
         if !showCompletedTodos { clauses.append("NOT (is_todo = 1 AND todo_completed > 0)") }
         clauses.append("encryption_applied = 0")
 
+        // Search results show the text around the first match instead of the start of the note.
+        var snippet = "substr(body, 1, 400)"
+        if case .search(let text) = filter, !Store.ftsQuery(text).isEmpty {
+            snippet = """
+            COALESCE(NULLIF((SELECT snippet(notes_fts, 1, '', '', '…', 24) FROM notes_fts
+                             WHERE notes_fts MATCH ? AND notes_fts.rowid = notes.rowid), ''), substr(body, 1, 400))
+            """
+            args.insert(Store.ftsQuery(text), at: 0)
+        }
+
         var order: [String] = []
         if uncompletedTodosOnTop { order.append("(is_todo = 1 AND todo_completed = 0) DESC") }
         switch sort {
@@ -213,7 +223,7 @@ public final class Store {
         }
         let sql = """
         SELECT id, title, parent_id, is_todo, todo_completed, todo_due, user_updated_time, user_created_time, deleted_time,
-               substr(body, 1, 400) AS snippet
+               \(snippet) AS snippet
         FROM notes WHERE \(clauses.joined(separator: " AND ")) ORDER BY \(order.joined(separator: ", "))
         """
         return ((try? db.query(sql, args)) ?? []).map(NoteSummary.init(row:))

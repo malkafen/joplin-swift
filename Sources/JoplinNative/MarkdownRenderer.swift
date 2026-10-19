@@ -43,6 +43,32 @@ struct MarkdownRenderer {
         return image
     }
 
+    private static let diagramCache = NSCache<NSString, NSImage>()
+
+    /// Mermaid diagram for `source`, cached: the preview re-renders on every keystroke in split view.
+    static func mermaid(_ source: String, fontSize: CGFloat) -> NSImage? {
+        let key = "\(fontSize)|\(source)" as NSString
+        if let cached = diagramCache.object(forKey: key) { return cached }
+        guard let image = Mermaid.image(source, fontSize: fontSize) else { return nil }
+        diagramCache.setObject(image, forKey: key)
+        return image
+    }
+
+    /// draw.io diagram stored in a resource: an SVG exported by draw.io (with the diagram embedded) or a
+    /// `.drawio` file. PNG exports render as ordinary images.
+    static func drawio(_ res: Resource, url: URL) -> NSImage? {
+        let ext = res.fileExtension.lowercased()
+        let isSVG = res.mime == "image/svg+xml" || ext == "svg"
+        let isFile = ext == "drawio" || ext == "dio" || res.mime.contains("drawio") || res.mime.contains("jgraph")
+        guard isSVG || isFile else { return nil }
+        let key = "drawio|\(url.path)" as NSString
+        if let cached = diagramCache.object(forKey: key) { return cached }
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let image = isSVG ? Drawio.image(svg: data) : Drawio.image(xml: String(decoding: data, as: UTF8.self))
+        if let image { diagramCache.setObject(image, forKey: key) }
+        return image
+    }
+
     func render(_ markdown: String, maxImageWidth: CGFloat = 640) -> NSAttributedString {
         let (source, formulas) = MathExtractor.extract(markdown)
         let document = Document(parsing: source)
@@ -407,6 +433,10 @@ private final class AttributedBuilder {
             let language = c.language?.lowercased()
             if language == "math" || language == "latex" || language == "katex" || language == "tex" {
                 displayMath(c.code, b)
+            } else if language == "mermaid", let image = MarkdownRenderer.mermaid(c.code, fontSize: base * 0.9) {
+                diagram(image, card: true, b)
+            } else if language == "drawio", let image = Drawio.image(xml: c.code) {
+                diagram(image, card: false, b)
             } else {
                 codeBlock(c.code, language: c.language, b)
             }
@@ -446,9 +476,17 @@ private final class AttributedBuilder {
         for inline in inlines { self.inline(inline, style) }
         html = HTMLState()
         out.append(NSAttributedString(string: "\n", attributes: attrs(style)))
+        // Line spacing is a multiple of the line height: lines with large images would get huge gaps.
+        var hasLargeImage = false
+        out.enumerateAttribute(.attachment, in: NSRange(location: p.start, length: out.length - p.start)) { value, _, stop in
+            if let a = value as? NSTextAttachment, a.bounds.height > base * 2.5 {
+                hasLargeImage = true
+                stop.pointee = true
+            }
+        }
         out.addAttribute(.paragraphStyle,
                          value: paragraphStyle(b, first: p.first, head: p.head, before: before, after: after, tabs: p.tabs,
-                                               align: align, lineHeight: lineHeight),
+                                               align: align, lineHeight: hasLargeImage ? 1 : lineHeight),
                          range: NSRange(location: p.start, length: out.length - p.start))
     }
 
@@ -502,6 +540,34 @@ private final class AttributedBuilder {
         CodeHighlighter.apply(language: lang, to: out, range: NSRange(location: codeStart, length: (text as NSString).length))
         out.addAttribute(.paragraphStyle, value: paragraphStyle(bb, first: p.first, head: p.head, after: base, tabs: p.tabs, lineHeight: 1.2),
                          range: NSRange(location: p.start, length: out.length - p.start))
+    }
+
+    /// A diagram centred in its own paragraph, optionally on a card like code blocks.
+    private func diagram(_ image: NSImage, card: Bool, _ b: BlockStyle) {
+        var bb = b
+        var width = maxImageWidth
+        if card {
+            let box = DecoratedBlock()
+            box.fill = subtleFill
+            box.radius = 8
+            box.setWidth(16, type: .absoluteValueType, for: .padding)
+            spaceBeforeBlock(box)
+            bb.textBlocks.append(box)
+            width -= 32
+        }
+        let p = beginParagraph(bb)
+        let size = image.size
+        let scale = min(1, max(width, 40) / max(size.width, 1))
+        let attachment = NSTextAttachment()
+        attachment.image = image
+        attachment.bounds = CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale)
+        out.append(NSAttributedString(attachment: attachment))
+        out.append(NSAttributedString(string: "\n", attributes: attrs(InlineStyle(size: base))))
+        out.addAttribute(.paragraphStyle,
+                         value: paragraphStyle(bb, first: p.first, head: p.head, after: card ? base : base * 0.8, tabs: p.tabs,
+                                               align: p.tabs == nil ? .center : .natural, lineHeight: 1),
+                         range: NSRange(location: p.start, length: out.length - p.start))
+        if card { spaceAfterBlock(b) }
     }
 
     private func displayMath(_ tex: String, _ b: BlockStyle) {
@@ -965,6 +1031,10 @@ private final class AttributedBuilder {
         var last = 0
         for m in detector.matches(in: string, range: NSRange(location: 0, length: ns.length)) {
             guard let url = m.url, url.scheme == "http" || url.scheme == "https" || url.scheme == "mailto" else { continue }
+            // Only what reads as a link: not bare names such as "Draw.io" or "file.md".
+            let found = ns.substring(with: m.range).lowercased()
+            guard found.hasPrefix("http://") || found.hasPrefix("https://") || found.hasPrefix("www.") || url.scheme == "mailto"
+            else { continue }
             append(ns.substring(with: NSRange(location: last, length: m.range.location - last)), s)
             var s2 = s
             s2.link = url
@@ -1022,14 +1092,14 @@ private final class AttributedBuilder {
         return NSAttributedString(attachment: attachment)
     }
 
-    private func imageAttachment(_ image: NSImage, width requested: CGFloat?, link: URL?) {
+    private func imageAttachment(_ image: NSImage, width requested: CGFloat?, link: URL?, rounded: Bool = true) {
         let size = image.size
         guard size.width > 0, size.height > 0 else { return }
         let target = min(requested ?? size.width, maxImageWidth)
         let scale = target / size.width
         let bounds = CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale)
         let attachment = NSTextAttachment()
-        attachment.image = Self.rounded(image, size: bounds.size)
+        attachment.image = rounded ? Self.rounded(image, size: bounds.size) : image
         attachment.bounds = bounds
         let a = NSMutableAttributedString(attachment: attachment)
         if let link { a.addAttribute(.link, value: link, range: NSRange(location: 0, length: a.length)) }
@@ -1050,6 +1120,10 @@ private final class AttributedBuilder {
     private func image(source src: String, alt: String, width: CGFloat?, _ s: InlineStyle) {
         if src.hasPrefix(":/"), let (res, url) = resource(src) {
             let itemURL = URL(string: "joplinitem://\(res.id)")
+            if let diagram = MarkdownRenderer.drawio(res, url: url) {
+                imageAttachment(diagram, width: width, link: itemURL, rounded: false)
+                return
+            }
             if res.isImage, let image = MarkdownRenderer.loadImage(url) {
                 imageAttachment(image, width: width, link: itemURL)
                 return
