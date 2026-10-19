@@ -41,17 +41,30 @@ Joplin Server account, after a minute of idling:
 
 - **Notebooks**: nested notebooks with emoji icons, drag & drop, trash with restore
 - **Notes and to-dos**: checkboxes in the list, completed to-dos sorted to the bottom, duplicate, move, copy link
-- **Markdown editor**: `NSTextView` with syntax highlighting, native undo, spell checking and the find bar
-- **Native preview**: rendered with `NSAttributedString`, `NSTextTable` and `NSTextBlock`. Clicking a
-  checkbox in the preview toggles it in the source.
+- **Markdown editor**: `NSTextView` with syntax highlighting (markup characters dimmed, fenced code coloured),
+  native undo, spell checking and the find bar
+- **Native preview**: rendered with `NSAttributedString`, `NSTextTable` and `NSTextBlock`, no web view:
+  - tables with alignment, striped rows and spans; nested lists with aligned markers; task lists with
+    clickable checkboxes that toggle in the source
+  - fenced code with syntax highlighting for ~20 languages and a language label
+  - GitHub alerts (`> [!NOTE]`, `TIP`, `IMPORTANT`, `WARNING`, `CAUTION`) and quotes
+  - math: `$…$` and `$$…$$` typeset with the STIX Two Math font (Greek, operators, fractions, roots, scripts)
+  - `[toc]` table of contents, heading anchors (`[link](#heading)`), `==highlight==`, bare URLs
+  - HTML that notes contain: `<img width>` (Joplin's resized images), `<kbd>`, `<mark>`, `<sup>`, `<sub>`,
+    `<u>`, `<details>`, simple tables and lists
+  - images from attachments and from the web (optional), scaled to the text width with rounded corners
+- **Fonts**: choose the font and size of the editor, the preview and code (any installed family or the system
+  designs: SF Pro, New York, SF Rounded, SF Mono). <kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> /
+  <kbd>⌘</kbd><kbd>0</kbd> scale the text. Lines are kept at a readable length in wide windows (optional).
 - **Layouts**: editor, preview, or side-by-side split (<kbd>⌃</kbd><kbd>L</kbd>)
 - **Search**: full-text search over all notes with SQLite FTS5, works for any language
-- **Tags**: token field with completion of existing tags
+- **Tags**: token field with completion of existing tags. Tags can be hidden in the sidebar
+  (<kbd>⌃</kbd><kbd>⌘</kbd><kbd>T</kbd>, or collapse the section) and above notes (View menu or Settings).
 - **Attachments**: drop files or paste images. They are stored as Joplin resources and linked as `:/id`.
 - **Sync with Joplin Server**: two-way, incremental (delta API), with sync locks, deletions, attachments and
   conflict copies for notes edited on two devices. Runs after edits, on an interval and with <kbd>⌘</kbd><kbd>S</kbd>.
 - **Interop**: import a Joplin Desktop profile, JEX archives and RAW / file-system sync folders. Export to JEX.
-- **Black theme** (default): dark grey panels on a pure black backdrop, or follow the system appearance
+- **Native look**: standard macOS sidebar, toolbar and materials; light and dark follow the system appearance
 - **Mac conventions**: menu bar commands and shortcuts, a Settings window, and opening `.jex` files from Finder
 
 ### Keyboard shortcuts
@@ -65,7 +78,9 @@ Joplin Server account, after a minute of idling:
 | Move to trash | <kbd>⌘</kbd><kbd>⌫</kbd> | Bulleted / numbered list | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>8</kbd> / <kbd>7</kbd> |
 | Editor / split / preview | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>1</kbd>–<kbd>3</kbd> | Checklist | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>9</kbd> |
 | Cycle layout | <kbd>⌃</kbd><kbd>L</kbd> | Insert date | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>T</kbd> |
-| Synchronise | <kbd>⌘</kbd><kbd>S</kbd> | | |
+| Synchronise | <kbd>⌘</kbd><kbd>S</kbd> | Highlight | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>H</kbd> |
+| Bigger / smaller text | <kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> | Math formula | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>M</kbd> |
+| Show tags in sidebar | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>T</kbd> | | |
 
 ## Install
 
@@ -155,6 +170,9 @@ Environment variables for scripted checks, for example over SSH (no screen-recor
 | `JN_SNAPSHOT_QUIT=1` | Quit after the snapshot |
 | `JN_SELECT_INDEX=N` | Select the N-th note in the list |
 | `JN_IMPORT_DESKTOP=1` | Import the Joplin Desktop profile on launch (or pass a profile path) |
+| `JN_LAYOUT=split` | Start in the `editor`, `split` or `preview` layout |
+| `JN_APPEARANCE=dark` | Force the `dark` or `light` appearance |
+| `JN_SCROLL=1` | Scroll editor and preview to a fraction of their height (0 top, 1 bottom) before the snapshot |
 
 ```bash
 open --env JN_DATA_DIR=/tmp/demo --env JN_SNAPSHOT=/tmp/demo.png --env JN_SNAPSHOT_QUIT=1 "/Applications/Joplin Native.app"

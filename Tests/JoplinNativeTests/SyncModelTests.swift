@@ -124,19 +124,11 @@ import Testing
         #expect(logins >= 2)
     }
 
-    @Test func themeAndSyncSettingsPersist() throws {
+    @Test func syncSettingsPersist() throws {
         let h = try ModelHarness()
-        #expect(h.model.theme == .black)
-        h.model.theme = .system
-        #expect(h.defaults.string(forKey: "theme") == "system")
-        #expect(AppTheme.system.appearance == nil)
-        #expect(AppTheme.black.appearance?.name == .darkAqua)
-        #expect(AppTheme.black.colorScheme == .dark)
-        #expect(AppTheme.allCases.map(\.label) == ["Black", "System"])
         h.model.syncURL = "https://x"
         #expect(h.store.setting("sync.url") == "https://x")
-        let again = try ModelHarness(directory: h.store.directory) { $0.set("system", forKey: "theme") }
-        #expect(again.model.theme == .system)
+        let again = try ModelHarness(directory: h.store.directory)
         #expect(again.model.syncURL == "https://x")
     }
 }

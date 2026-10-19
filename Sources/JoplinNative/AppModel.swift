@@ -132,19 +132,72 @@ final class AppModel {
         didSet { defaults.set(layout.rawValue, forKey: "layout") }
     }
 
+    // MARK: Text settings
+
+    var editorFont: FontFamily = .system {
+        didSet { defaults.set(editorFont.name, forKey: "editorFont") }
+    }
+
     var editorFontSize: Double = 14 {
         didSet { defaults.set(editorFontSize, forKey: "editorFontSize") }
     }
 
-    var editorMonospaced = false {
-        didSet { defaults.set(editorMonospaced, forKey: "editorMonospaced") }
+    var previewFont: FontFamily = .system {
+        didSet { defaults.set(previewFont.name, forKey: "previewFont") }
     }
 
-    var theme: AppTheme = .black {
-        didSet {
-            defaults.set(theme.rawValue, forKey: "theme")
-            theme.apply()
-        }
+    var previewFontSize: Double = 15 {
+        didSet { defaults.set(previewFontSize, forKey: "previewFontSize") }
+    }
+
+    var codeFont: FontFamily = .monospaced {
+        didSet { defaults.set(codeFont.name, forKey: "codeFont") }
+    }
+
+    /// Keeps lines at a comfortable reading length in wide windows.
+    var readableWidth = true {
+        didSet { defaults.set(readableWidth, forKey: "readableWidth") }
+    }
+
+    var loadRemoteImages = true {
+        didSet { defaults.set(loadRemoteImages, forKey: "loadRemoteImages") }
+    }
+
+    // MARK: Tags visibility
+
+    var showSidebarTags = true {
+        didSet { defaults.set(showSidebarTags, forKey: "showSidebarTags") }
+    }
+
+    /// Expanded state of the Tags section in the sidebar.
+    var sidebarTagsExpanded = true {
+        didSet { defaults.set(sidebarTagsExpanded, forKey: "sidebarTagsExpanded") }
+    }
+
+    var showNoteTags = true {
+        didSet { defaults.set(showNoteTags, forKey: "showNoteTags") }
+    }
+
+    static let fontSizes: ClosedRange<Double> = 9...36
+
+    var editorTypography: Typography {
+        Typography(family: editorFont, size: CGFloat(editorFontSize), codeFamily: codeFont)
+    }
+
+    var previewTypography: Typography {
+        Typography(family: previewFont, size: CGFloat(previewFontSize), codeFamily: codeFont)
+    }
+
+    /// ⌘+ / ⌘- / ⌘0: scales the editor and the preview together.
+    func adjustTextSize(by step: Double) {
+        let range = Self.fontSizes
+        editorFontSize = min(range.upperBound, max(range.lowerBound, editorFontSize + step))
+        previewFontSize = min(range.upperBound, max(range.lowerBound, previewFontSize + step))
+    }
+
+    func resetTextSize() {
+        editorFontSize = 14
+        previewFontSize = 15
     }
 
     // Sync settings live in the database so that each data directory has its own sync target.
@@ -203,8 +256,17 @@ final class AppModel {
         uncompletedTodosOnTop = defaults.object(forKey: "todosOnTop") as? Bool ?? true
         layout = EditorLayout(rawValue: defaults.string(forKey: "layout") ?? "") ?? .editor
         editorFontSize = defaults.object(forKey: "editorFontSize") as? Double ?? 14
-        editorMonospaced = defaults.bool(forKey: "editorMonospaced")
-        theme = AppTheme(rawValue: defaults.string(forKey: "theme") ?? "") ?? .black
+        // Earlier versions only had a "monospaced editor" switch.
+        editorFont = defaults.string(forKey: "editorFont").map(FontFamily.init(name:))
+            ?? (defaults.bool(forKey: "editorMonospaced") ? .monospaced : .system)
+        previewFont = defaults.string(forKey: "previewFont").map(FontFamily.init(name:)) ?? .system
+        previewFontSize = defaults.object(forKey: "previewFontSize") as? Double ?? 15
+        codeFont = defaults.string(forKey: "codeFont").map(FontFamily.init(name:)) ?? .monospaced
+        readableWidth = defaults.object(forKey: "readableWidth") as? Bool ?? true
+        loadRemoteImages = defaults.object(forKey: "loadRemoteImages") as? Bool ?? true
+        showSidebarTags = defaults.object(forKey: "showSidebarTags") as? Bool ?? true
+        sidebarTagsExpanded = defaults.object(forKey: "sidebarTagsExpanded") as? Bool ?? true
+        showNoteTags = defaults.object(forKey: "showNoteTags") as? Bool ?? true
         syncURL = store.setting("sync.url") ?? ""
         syncEmail = store.setting("sync.email") ?? ""
         syncPassword = store.setting("sync.password") ?? ""
@@ -229,11 +291,13 @@ final class AppModel {
         }
     }
 
+    @ObservationIgnored var remoteImages: (URL) -> NSImage? = { RemoteImageLoader.shared.image(for: $0) }
+
     var renderer: MarkdownRenderer {
         let store = self.store
-        return MarkdownRenderer(baseSize: CGFloat(editorFontSize)) { id in
+        return MarkdownRenderer(typography: previewTypography, resolveResource: { id in
             store.resource(id: id).map { ($0, store.url(for: $0)) }
-        }
+        }, remoteImage: loadRemoteImages ? remoteImages : nil)
     }
 
     // MARK: - Loading

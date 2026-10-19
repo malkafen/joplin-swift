@@ -15,8 +15,6 @@ struct ContentView: View {
         } detail: {
             NoteEditorView()
         }
-        .preferredColorScheme(model.theme.colorScheme)
-        .toolbarBackground(model.theme == .black ? AnyShapeStyle(Palette.base) : AnyShapeStyle(.bar), for: .windowToolbar)
         .alert(model.alert?.title ?? "", isPresented: isPresented(\.alert), presenting: model.alert) { _ in
             Button("OK") {}
         } message: { info in
@@ -79,15 +77,23 @@ struct SidebarView: View {
                     .contextMenu { folderMenu(node.folder) }
             }
 
-            if !model.tags.isEmpty {
-                SidebarHeader(title: "Tags") { EmptyView() }
-                ForEach(model.tags) { tag in
-                    Label(tag.title, systemImage: "tag")
-                        .badge(tag.noteCount)
-                        .tag(SidebarItem.tag(tag.id))
+            if model.showSidebarTags, !model.tags.isEmpty {
+                Section(isExpanded: $model.sidebarTagsExpanded) {
+                    ForEach(model.tags) { tag in
+                        Label(tag.title, systemImage: "number")
+                            .badge(tag.noteCount)
+                            .tag(SidebarItem.tag(tag.id))
+                            .contextMenu {
+                                Button("Rename…") { model.promptRenameTag(tag) }
+                                Button("Delete Tag", role: .destructive) { model.deleteTag(tag) }
+                                Divider()
+                                Button("Hide Tags in Sidebar") { model.showSidebarTags = false }
+                            }
+                    }
+                } header: {
+                    Text("Tags")
                         .contextMenu {
-                            Button("Rename…") { model.promptRenameTag(tag) }
-                            Button("Delete Tag", role: .destructive) { model.deleteTag(tag) }
+                            Button("Hide Tags in Sidebar") { model.showSidebarTags = false }
                         }
                 }
             }
@@ -112,7 +118,6 @@ struct SidebarView: View {
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) { SyncStatusBar() }
-        .panel(model.theme, outer: [.leading, .bottom])
     }
 
     @ViewBuilder
@@ -187,7 +192,6 @@ struct SyncStatusBar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        .background(model.theme == .black ? AnyShapeStyle(Palette.panel) : AnyShapeStyle(.clear))
     }
 }
 
@@ -243,7 +247,6 @@ struct NoteListView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .panel(model.theme, outer: .bottom)
         .navigationTitle(model.listTitle)
         .navigationSubtitle(model.notes.count == 1 ? "1 note" : "\(model.notes.count) notes")
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search all notes")
@@ -381,8 +384,7 @@ struct NoteEditorView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(model.theme == .black ? Palette.panel : Color(nsColor: .textBackgroundColor))
-        .panel(model.theme, outer: [.trailing, .bottom])
+        .background(Color(nsColor: .textBackgroundColor))
         .toolbar {
             if model.currentNote != nil {
                 ToolbarItemGroup(placement: .primaryAction) {
@@ -431,7 +433,7 @@ struct NoteEditorView: View {
     }
 
     private func header(_ note: Note, inTrash: Bool) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 if note.isTodo {
                     Toggle("", isOn: Binding(get: { note.todoCompleted > 0 }, set: { model.setTodoCompleted(note.id, $0) }))
@@ -441,12 +443,12 @@ struct NoteEditorView: View {
                 }
                 TextField("Untitled", text: Binding(get: { model.currentNote?.title ?? "" }, set: { model.updateTitle($0) }))
                     .textFieldStyle(.plain)
-                    .font(.system(size: 22, weight: .bold))
+                    .font(Font(model.editorFont.font(size: 22, weight: .bold)))
                     .focused($titleFocused)
                     .disabled(inTrash)
                     .onSubmit { model.editor.focus() }
             }
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 Menu {
                     ForEach(model.flatFolders, id: \.folder.id) { item in
                         Button(String(repeating: "    ", count: item.depth) + item.folder.title) {
@@ -459,24 +461,28 @@ struct NoteEditorView: View {
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .disabled(inTrash)
+                .help("Move to notebook")
 
-                HStack(spacing: 4) {
-                    Image(systemName: "tag")
-                        .foregroundStyle(.secondary)
-                    TagField(tags: model.currentTags, allTags: model.tags.map(\.title)) { model.setCurrentTags($0) }
-                        .frame(minWidth: 140, maxWidth: 360)
+                if model.showNoteTags {
+                    HStack(spacing: 4) {
+                        Image(systemName: "number")
+                            .foregroundStyle(.tertiary)
+                        TagField(tags: model.currentTags, allTags: model.tags.map(\.title)) { model.setCurrentTags($0) }
+                            .frame(minWidth: 140, maxWidth: 360)
+                    }
                 }
 
                 Spacer(minLength: 8)
 
                 Text(longDate(note.userUpdatedTime))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(.tertiary)
                     .help("Created \(longDate(note.userCreatedTime))")
             }
             .font(.callout)
+            .foregroundStyle(.secondary)
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 14)
+        .padding(.horizontal, 24)
+        .padding(.top, 16)
         .padding(.bottom, 10)
     }
 
@@ -499,8 +505,8 @@ struct NoteEditorView: View {
         MarkdownEditor(
             text: note.body,
             noteId: note.id,
-            fontSize: model.editorFontSize,
-            monospaced: model.editorMonospaced,
+            typography: model.editorTypography,
+            readableWidth: model.readableWidth,
             isEditable: !inTrash,
             bridge: model.editor,
             onChange: { model.updateBody($0) },
@@ -510,25 +516,124 @@ struct NoteEditorView: View {
     }
 
     private func previewPane(_ note: Note) -> some View {
-        MarkdownPreview(markdown: note.body, noteId: note.id, fontSize: model.editorFontSize,
-                        renderer: model.renderer, onLink: { model.handleLink($0) })
+        MarkdownPreview(markdown: note.body, noteId: note.id, renderer: model.renderer,
+                        readableWidth: model.readableWidth, onLink: { model.handleLink($0) })
     }
 }
 
 // MARK: - Settings
 
 struct SettingsView: View {
+    var body: some View {
+        TabView {
+            GeneralSettings()
+                .tabItem { Label("General", systemImage: "gearshape") }
+            TextSettings()
+                .tabItem { Label("Text", systemImage: "textformat") }
+            SyncSettings()
+                .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
+        }
+        .frame(width: 520)
+    }
+}
+
+struct GeneralSettings: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
         @Bindable var model = model
         Form {
-            Section("Appearance") {
-                Picker("Theme", selection: $model.theme) {
-                    ForEach(AppTheme.allCases) { Text($0.label).tag($0) }
+            Section {
+                Picker("Default layout", selection: $model.layout) {
+                    ForEach(EditorLayout.allCases) { Text($0.label).tag($0) }
                 }
-                .pickerStyle(.segmented)
+                Picker("Sort notes by", selection: $model.sort) {
+                    Text("Date Edited").tag(NoteSort.updated)
+                    Text("Date Created").tag(NoteSort.created)
+                    Text("Title").tag(NoteSort.title)
+                }
+                Toggle("Uncompleted to-dos on top", isOn: $model.uncompletedTodosOnTop)
             }
+            Section("Tags") {
+                Toggle("Show tags in the sidebar", isOn: $model.showSidebarTags)
+                Toggle("Show tags above notes", isOn: $model.showNoteTags)
+            }
+            Section("Data") {
+                LabeledContent("Location") {
+                    Text(model.store.directory.path)
+                        .textSelection(.enabled)
+                        .lineLimit(2)
+                        .truncationMode(.middle)
+                }
+                Button("Show in Finder") {
+                    NSWorkspace.shared.activateFileViewerSelecting([model.store.directory])
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct TextSettings: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        Form {
+            Section("Editor") {
+                FontPicker(title: "Font", selection: $model.editorFont)
+                SizeStepper(value: $model.editorFontSize)
+            }
+            Section("Preview") {
+                FontPicker(title: "Font", selection: $model.previewFont)
+                SizeStepper(value: $model.previewFontSize)
+                Toggle("Load images from the web", isOn: $model.loadRemoteImages)
+            }
+            Section {
+                FontPicker(title: "Code font", selection: $model.codeFont)
+                Toggle("Limit line length for easier reading", isOn: $model.readableWidth)
+            } footer: {
+                Text("⌘+ and ⌘− change the text size of the editor and the preview together, ⌘0 restores it.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct FontPicker: View {
+    let title: String
+    @Binding var selection: FontFamily
+
+    var body: some View {
+        Picker(title, selection: $selection) {
+            ForEach(FontFamily.systemDesigns) { Text($0.label).tag($0) }
+            Divider()
+            ForEach(FontFamily.installed) { Text($0.label).tag($0) }
+        }
+    }
+}
+
+struct SizeStepper: View {
+    @Binding var value: Double
+
+    var body: some View {
+        LabeledContent("Size") {
+            Stepper(value: $value, in: AppModel.fontSizes, step: 1) {
+                Text("\(Int(value)) pt").monospacedDigit()
+            }
+        }
+    }
+}
+
+struct SyncSettings: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        Form {
             Section {
                 TextField("Server URL", text: $model.syncURL, prompt: Text("https://joplin.example.com"))
                     .textContentType(.URL)
@@ -561,36 +666,13 @@ struct SettingsView: View {
                     .disabled(!model.isSyncConfigured || model.isSyncing)
                 }
             } header: {
-                Text("Synchronisation (Joplin Server)")
+                Text("Joplin Server")
             } footer: {
                 Text("Uses the same sync target as the Joplin apps. End-to-end encrypted targets are not supported yet.")
                     .foregroundStyle(.secondary)
             }
-            Section("Editor") {
-                LabeledContent("Font size") {
-                    Stepper(value: $model.editorFontSize, in: 10...28, step: 1) {
-                        Text("\(Int(model.editorFontSize)) pt").monospacedDigit()
-                    }
-                }
-                Toggle("Monospaced font in editor", isOn: $model.editorMonospaced)
-                Picker("Layout", selection: $model.layout) {
-                    ForEach(EditorLayout.allCases) { Text($0.label).tag($0) }
-                }
-            }
-            Section("Data") {
-                LabeledContent("Location") {
-                    Text(model.store.directory.path)
-                        .textSelection(.enabled)
-                        .lineLimit(2)
-                        .truncationMode(.middle)
-                }
-                Button("Show in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([model.store.directory])
-                }
-            }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
         .fixedSize(horizontal: false, vertical: true)
     }
 }

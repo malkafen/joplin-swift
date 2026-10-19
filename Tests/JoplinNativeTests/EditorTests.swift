@@ -143,14 +143,37 @@ import Testing
         #expect(attr(s, .strikethroughStyle, at: "strike") as? Int == NSUnderlineStyle.single.rawValue)
         #expect(attr(s, .foregroundColor, at: "code") as? NSColor == .systemPink)
         #expect(attr(s, .foregroundColor, at: "<b>") as? NSColor == .systemTeal)
-        #expect(attr(s, .foregroundColor, at: "[link]") as? NSColor == .linkColor)
+        #expect(attr(s, .foregroundColor, at: "link]") as? NSColor == .linkColor)
+        #expect(attr(s, .foregroundColor, at: "[link]") as? NSColor == .tertiaryLabelColor)
+        #expect(attr(s, .foregroundColor, at: "](https") as? NSColor == .tertiaryLabelColor)
+        #expect(attr(s, .foregroundColor, at: "**bold") as? NSColor == .tertiaryLabelColor)
         #expect(attr(s, .foregroundColor, at: "https://bare") as? NSColor == .linkColor)
         #expect(attr(s, .foregroundColor, at: "- item") as? NSColor == .controlAccentColor)
         #expect(attr(s, .foregroundColor, at: "[ ]") as? NSColor == .controlAccentColor)
         #expect(attr(s, .foregroundColor, at: "> quote") as? NSColor == .secondaryLabelColor)
         #expect(attr(s, .foregroundColor, at: "---") as? NSColor == .tertiaryLabelColor)
-        #expect(attr(s, .backgroundColor, at: "fenced") != nil)
+        #expect((attr(s, .font, at: "fenced") as? NSFont)?.isFixedPitch == true)
         #expect(h.baseAttributes[.font] as? NSFont == NSFont.systemFont(ofSize: 14))
+    }
+
+    @Test func markHighlightMathAndFencedCode() throws {
+        let text = "==mark== $x^2$\n```swift\nlet a = \"s\" // c\n```\n```\nplain\n"
+        let (s, _) = highlighted(text)
+        #expect(attr(s, .backgroundColor, at: "mark") != nil)
+        #expect(attr(s, .foregroundColor, at: "x^2") as? NSColor == .systemIndigo)
+        #expect(attr(s, .foregroundColor, at: "let") as? NSColor == .systemPink)
+        #expect(attr(s, .foregroundColor, at: "\"s\"") as? NSColor == .systemRed)
+        #expect(attr(s, .foregroundColor, at: "// c") as? NSColor == .secondaryLabelColor)
+        #expect(attr(s, .foregroundColor, at: "```swift") as? NSColor == .tertiaryLabelColor)
+        #expect(attr(s, .foregroundColor, at: "plain") as? NSColor == .labelColor)
+    }
+
+    @Test func fontFamilies() throws {
+        let h = MarkdownHighlighter()
+        h.configure(Typography(family: .serif, size: 16))
+        let font = try #require(h.baseAttributes[.font] as? NSFont)
+        #expect(font.pointSize == 16)
+        #expect(font.fontDescriptor.symbolicTraits.contains(.monoSpace) == false)
     }
 
     @Test func monospacedConfiguration() {
