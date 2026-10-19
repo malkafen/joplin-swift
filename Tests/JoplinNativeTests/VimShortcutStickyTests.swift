@@ -204,6 +204,51 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         #expect(tv.textStorage?.attribute(.backgroundColor, at: 9, effectiveRange: nil) == nil)
     }
 
+    @Test func highlightsArePaintedAroundTheVisibleText() throws {
+        _ = NSApplication.shared
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.close() }
+        let scroll = NSScrollView(frame: window.contentView!.bounds)
+        let tv = MarkdownTextView(frame: scroll.bounds)
+        tv.isVerticallyResizable = true
+        tv.autoresizingMask = [.width]
+        scroll.documentView = tv
+        window.contentView?.addSubview(scroll)
+        tv.string = String(repeating: "foo line\n", count: 2_000)
+        let vim = VimEngine(textView: tv)
+        tv.vim = vim
+        vim.paintMargin = 200
+        vim.reset()
+        let lm = try #require(tv.layoutManager)
+        func lit(_ i: Int) -> Bool { lm.temporaryAttribute(.backgroundColor, atCharacterIndex: i, effectiveRange: nil) != nil }
+        let last = (tv.string as NSString).length - 9
+
+        keys(vim, "/foo\r")
+        #expect(vim.highlightedRanges.count == 2_000)
+        #expect(lit(9) && !lit(last))
+        keys(vim, "G")
+        vim.viewportChanged()
+        #expect(lit(last) && !lit(9))
+        keys(vim, ":noh\r")
+        #expect(!lit(last))
+    }
+
+    @Test func verticalMotionsStopAtTheEnds() {
+        let (tv, vim, window) = setup("abc\nde\n\nfghi\nj")
+        defer { window.close() }
+        keys(vim, "ll2j"); #expect(cursor(tv) == 7) // empty line
+        keys(vim, "j"); #expect(cursor(tv) == 10) // column 2 again
+        keys(vim, "9j"); #expect(cursor(tv) == 13) // stops at the last line
+        keys(vim, "j"); #expect(cursor(tv) == 13)
+        keys(vim, "k"); #expect(cursor(tv) == 10)
+        keys(vim, "9k"); #expect(cursor(tv) == 2)
+        keys(vim, "k"); #expect(cursor(tv) == 2)
+        keys(vim, "3G"); #expect(cursor(tv) == 7)
+        keys(vim, "9G"); #expect(cursor(tv) == 13)
+        keys(vim, "gg2dj"); #expect(tv.string == "fghi\nj")
+    }
+
     @Test func motions() {
         let (tv, vim, window) = setup("one two-three  four\n  second line\n\nlast")
         defer { window.close() }

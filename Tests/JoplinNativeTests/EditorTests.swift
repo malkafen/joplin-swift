@@ -187,20 +187,99 @@ import Testing
         #expect(s.length == 0)
     }
 
-    @Test func largeDocumentsOnlyRefreshTheEditedParagraph() {
+    private func isBold(_ s: NSTextStorage, at i: Int) -> Bool {
+        (s.attribute(.font, at: i, effectiveRange: nil) as? NSFont).map { NSFontManager.shared.traits(of: $0).contains(.boldFontMask) } == true
+    }
+
+    @Test func largeDocumentsAreStyledAroundTheVisibleText() {
         let filler = String(repeating: "plain line of text\n", count: 4_000)
         let text = "**first**\n" + filler + "**last**"
         let storage = NSTextStorage(string: text)
         let h = MarkdownHighlighter()
-        let editedLocation = (text as NSString).length - 3
-        h.highlight(storage, edited: NSRange(location: editedLocation, length: 1))
-        let first = storage.attribute(.font, at: 2, effectiveRange: nil) as? NSFont
-        let last = storage.attribute(.font, at: editedLocation, effectiveRange: nil) as? NSFont
-        #expect(first.map { NSFontManager.shared.traits(of: $0).contains(.boldFontMask) } != true)
-        #expect(last.map { NSFontManager.shared.traits(of: $0).contains(.boldFontMask) } == true)
+        h.radius = 1_000
+        h.highlight(storage)
+        let last = (text as NSString).length - 3
+        #expect(isBold(storage, at: 2))
+        #expect(!isBold(storage, at: last))
+        #expect(h.window.location == 0 && h.window.length < 2_000)
+
+        // Scrolling to the end styles it and returns the start to the base style.
+        h.show(NSRange(location: last, length: 3), in: storage)
+        #expect(!isBold(storage, at: 2))
+        #expect(isBold(storage, at: last))
+        h.show(NSRange(location: last - 10, length: 3), in: storage)
+        #expect(isBold(storage, at: last))
+
+        // Typing far from the styled part keeps the base style there.
+        storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: "**x**")
+        h.highlight(storage, edited: NSRange(location: 0, length: 5))
+        #expect(!isBold(storage, at: 2))
+        #expect(isBold(storage, at: last + 5))
 
         // An edit range past the end is clamped instead of crashing.
         h.highlight(storage, edited: NSRange(location: 1_000_000, length: 5))
+    }
+
+    @Test func manySmallBlocksKeepTheWindowSmall() {
+        let text = String(repeating: "text\n```\ncode\n```\n$$\nx\n$$\n", count: 2_000)
+        let storage = NSTextStorage(string: text)
+        let h = MarkdownHighlighter()
+        h.radius = 1_000
+        h.highlight(storage)
+        #expect(h.window.location == 0 && h.window.length < 1_100)
+    }
+
+    @Test func longBlocksAreStyledWhereTheyAreShown() throws {
+        let code = (0..<400).map { "let v\($0) = \"s\" // # not a heading" }.joined(separator: "\n")
+        let text = "# Top\n```swift\n" + code + "\n```\n# After\n"
+        let storage = NSTextStorage(string: text)
+        let h = MarkdownHighlighter()
+        h.radius = 500
+        h.maxBlock = 1_000
+        h.highlight(storage)
+        let ns = text as NSString
+        #expect(attr(storage, .foregroundColor, at: "```swift") as? NSColor == .tertiaryLabelColor)
+        #expect(attr(storage, .foregroundColor, at: "let v0") as? NSColor == .systemPink)
+
+        // The middle of the block: still code, its comments not headings.
+        let middle = ns.range(of: "let v200").location
+        h.show(NSRange(location: middle, length: 10), in: storage)
+        #expect((storage.attribute(.font, at: middle + 4, effectiveRange: nil) as? NSFont)?.isFixedPitch == true)
+        #expect(storage.attribute(.foregroundColor, at: middle, effectiveRange: nil) as? NSColor == .systemPink)
+        let comment = ns.range(of: "// # not", range: NSRange(location: middle, length: 100)).location
+        #expect(storage.attribute(.foregroundColor, at: comment, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
+
+        // The end: the closing fence is dimmed and the text after it is Markdown again.
+        let after = ns.range(of: "# After").location
+        h.show(NSRange(location: after, length: 3), in: storage)
+        let close = ns.range(of: "\n```\n").location + 1
+        #expect(storage.attribute(.foregroundColor, at: close, effectiveRange: nil) as? NSColor == .tertiaryLabelColor)
+        #expect((storage.attribute(.font, at: after + 2, effectiveRange: nil) as? NSFont)?.pointSize == 21)
+
+        // Long display math.
+        let math = "$$\n" + String(repeating: "x + y \\\\\n", count: 300) + "$$\n"
+        let ms = NSTextStorage(string: "intro\n" + math + "end")
+        h.highlight(ms)
+        h.show(NSRange(location: 1_500, length: 5), in: ms)
+        #expect(ms.attribute(.foregroundColor, at: 1_500, effectiveRange: nil) as? NSColor == .systemIndigo)
+    }
+
+    @Test func searchWordsAndFontsRestyleTheWindow() throws {
+        let storage = NSTextStorage(string: "alpha beta\n**gamma**")
+        let h = MarkdownHighlighter()
+        h.highlight(storage)
+        h.searchTerms = ["beta"]
+        h.refresh(storage)
+        #expect(attr(storage, .backgroundColor, at: "beta") as? NSColor == SearchHighlight.color)
+        h.configure(Typography(family: .monospaced, size: 18))
+        h.restyle(storage)
+        #expect((attr(storage, .font, at: "alpha") as? NSFont)?.pointSize == 18)
+        #expect(attr(storage, .backgroundColor, at: "beta") as? NSColor == SearchHighlight.color)
+        // A highlighter that has not seen this text styles it from scratch.
+        let fresh = MarkdownHighlighter()
+        fresh.refresh(storage)
+        fresh.restyle(storage)
+        #expect(attr(storage, .backgroundColor, at: "beta") == nil)
     }
 }
 

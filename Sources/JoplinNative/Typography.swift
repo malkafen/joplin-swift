@@ -100,18 +100,21 @@ enum SearchHighlight {
     }
 
     /// Ranges of all terms in `string`, ignoring case and diacritics, in text order.
-    static func ranges(of terms: [String], in string: String) -> [NSRange] {
+    static func ranges(of terms: [String], in string: String, range: NSRange? = nil, limit: Int = .max) -> [NSRange] {
         guard !terms.isEmpty, !string.isEmpty else { return [] }
         let ns = string as NSString
+        let scope = range ?? NSRange(location: 0, length: ns.length)
         var result: [NSRange] = []
         for term in terms {
-            var search = NSRange(location: 0, length: ns.length)
-            while search.length > 0 {
+            var search = scope
+            var found = 0
+            while search.length > 0, found < limit {
                 let r = ns.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: search)
                 guard r.location != NSNotFound, r.length > 0 else { break }
                 result.append(r)
+                found += 1
                 let next = r.location + r.length
-                search = NSRange(location: next, length: ns.length - next)
+                search = NSRange(location: next, length: NSMaxRange(scope) - next)
             }
         }
         return result.sorted { $0.location < $1.location }

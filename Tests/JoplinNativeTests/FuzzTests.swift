@@ -106,12 +106,57 @@ struct SplitMix: RandomNumberGenerator {
                 let at = Int.random(in: 0...length, using: &rng)
                 let remove = Bool.random(using: &rng) ? min(length - at, Int.random(in: 0...6, using: &rng)) : 0
                 let insert = Bool.random(using: &rng) ? Self.noise.randomElement(using: &rng)! : "x"
+                let before = storage.string
                 storage.replaceCharacters(in: NSRange(location: at, length: remove), with: insert)
                 h.highlight(storage, edited: NSRange(location: at, length: (insert as NSString).length))
                 let reference = NSTextStorage(string: storage.string)
                 MarkdownHighlighter().highlight(reference)
-                #expect(same(storage, reference), "after editing at \(at): \(storage.string.debugDescription)")
+                #expect(same(storage, reference), "replacing \(remove) at \(at) with \(insert.debugDescription) in \(before.debugDescription)")
                 if !same(storage, reference) { return }
+            }
+        }
+    }
+
+    /// With a small window: inside it the style is the full highlight's, outside it the base style, while editing
+    /// and scrolling at random.
+    @Test func windowedHighlightMatchesFullHighlight() {
+        var rng = SplitMix(state: UInt64(ProcessInfo.processInfo.environment["JN_FUZZ_SEED"] ?? "") ?? 1)
+        let iterations = Int(ProcessInfo.processInfo.environment["JN_FUZZ_N"] ?? "") ?? 300
+        let keys: [NSAttributedString.Key] = [.font, .foregroundColor, .backgroundColor, .strikethroughStyle]
+        func value(_ s: NSAttributedString, _ k: NSAttributedString.Key, _ i: Int) -> AnyObject? { s.attribute(k, at: i, effectiveRange: nil) as AnyObject? }
+        func equal(_ a: AnyObject?, _ b: AnyObject?) -> Bool { a == nil ? b == nil : b.map { a!.isEqual($0) } ?? false }
+        for _ in 0..<max(1, iterations / 10) {
+            let storage = NSTextStorage(string: (0..<8).map { _ in Self.seeds.randomElement(using: &rng)! }.joined(separator: "\n\n"))
+            let h = MarkdownHighlighter()
+            h.radius = Int.random(in: 10...200, using: &rng)
+            h.highlight(storage)
+            for step in 0..<40 {
+                let length = storage.length
+                if Bool.random(using: &rng) {
+                    let at = Int.random(in: 0...length, using: &rng)
+                    let remove = Bool.random(using: &rng) ? min(length - at, Int.random(in: 0...6, using: &rng)) : 0
+                    let insert = Bool.random(using: &rng) ? Self.noise.randomElement(using: &rng)! : "x"
+                    storage.replaceCharacters(in: NSRange(location: at, length: remove), with: insert)
+                    h.highlight(storage, edited: NSRange(location: at, length: (insert as NSString).length))
+                } else {
+                    let at = Int.random(in: 0...length, using: &rng)
+                    h.show(NSRange(location: at, length: min(length - at, 40)), in: storage)
+                }
+                let reference = NSTextStorage(string: storage.string)
+                MarkdownHighlighter().highlight(reference)
+                // The base style, with the fonts the text storage substitutes (emoji) like in the editor.
+                let plain = NSTextStorage(string: storage.string)
+                plain.setAttributes(MarkdownHighlighter().baseAttributes, range: NSRange(location: 0, length: plain.length))
+                var mismatch: Int?
+                for i in 0..<storage.length where mismatch == nil {
+                    let inside = NSLocationInRange(i, h.window)
+                    for k in keys where mismatch == nil {
+                        let expected = value(inside ? reference : plain, k, i)
+                        if !equal(value(storage, k, i), expected) { mismatch = i }
+                    }
+                }
+                #expect(mismatch == nil, "step \(step), at \(mismatch ?? -1), window \(h.window): \(storage.string.debugDescription)")
+                if mismatch != nil { return }
             }
         }
     }

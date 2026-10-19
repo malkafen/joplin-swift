@@ -227,6 +227,28 @@ import Testing
         _ = scroll
     }
 
+    @Test func longNotesRenderInTheBackground() {
+        func waitFor(_ done: () -> Bool) {
+            let deadline = Date().addingTimeInterval(30)
+            while !done(), Date() < deadline { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+        }
+        let body = "# Top\n\n" + (1...30_000).map { "Paragraph \($0) with **bold** text.\n\n" }.joined()
+        let (tv, _, coordinator, _) = preview(body)
+        // The start shows at once, the rest when rendered.
+        #expect(tv.string.hasPrefix("Top") && tv.string.count < 30_000)
+        waitFor { tv.string.hasSuffix("Paragraph 30000 with bold text.") }
+        #expect(tv.string.hasSuffix("Paragraph 30000 with bold text."))
+        #expect(tv.layoutManager?.allowsNonContiguousLayout == true)
+
+        // Edits while rendering: only the latest text is shown in the end.
+        coordinator.markdown = body + "first edit"
+        coordinator.render(keepScroll: true)
+        coordinator.markdown = body + "second edit"
+        coordinator.render(keepScroll: true)
+        waitFor { tv.string.hasSuffix("second edit") }
+        #expect(tv.string.hasSuffix("second edit"))
+    }
+
     @Test func remoteImagesTriggerRerender() {
         let (tv, _, coordinator, _) = preview("![x](https://img.test/a.png)")
         coordinator.markdown = "![x](https://img.test/a.png)"

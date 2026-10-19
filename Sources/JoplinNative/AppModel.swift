@@ -83,7 +83,18 @@ final class AppModel {
     private(set) var allNotesCount = 0
     private(set) var trashCount = 0
     private(set) var notes: [NoteSummary] = []
-    private(set) var currentNote: Note?
+    /// Observed by hand: the generated setter compares old and new values, and comparing the body of a huge note on
+    /// every keystroke is slow.
+    @ObservationIgnored private var storedNote: Note?
+    private(set) var currentNote: Note? {
+        get {
+            access(keyPath: \.currentNote)
+            return storedNote
+        }
+        set {
+            withMutation(keyPath: \.currentNote) { storedNote = newValue }
+        }
+    }
     private(set) var currentTags: [String] = []
     private(set) var titleFocusRequest = 0
 
@@ -519,7 +530,7 @@ final class AppModel {
             findPasteboard.clearContents()
             findPasteboard.setString(term, forType: .string)
         }
-        if selectedNoteIDs.count == 1, let id = selectedNoteIDs.first, let note = store.note(id: id) {
+        if selectedNoteIDs.count == 1, let id = selectedNoteIDs.first, let note = loadNote(id) {
             currentNote = note
             currentTags = store.tags(forNote: id).map(\.title)
         } else {
@@ -528,9 +539,27 @@ final class AppModel {
         }
     }
 
+    /// The version of the current note's body loaded or saved here: while the database holds the same, the body in
+    /// memory is up to date, and reading a huge one again on every search keystroke would be slow.
+    @ObservationIgnored private var loadedStamp: (id: String, stamp: Store.BodyStamp)?
+
+    private func loadNote(_ id: String) -> Note? {
+        // Read first: a change written in between makes the body look outdated, not the other way round.
+        let stamp = store.bodyStamp(id: id)
+        let note = store.note(id: id)
+        loadedStamp = stamp.map { (id, $0) }
+        return note
+    }
+
     private func refreshCurrentNote() {
-        guard let id = currentNote?.id else { return }
-        if let note = store.note(id: id) {
+        guard let current = currentNote else { return }
+        let id = current.id
+        if let loaded = loadedStamp, loaded.id == id, store.bodyStamp(id: id) == loaded.stamp,
+           var note = store.noteWithoutBody(id: id) {
+            note.body = current.body
+            if note != current { currentNote = note }
+            currentTags = store.tags(forNote: id).map(\.title)
+        } else if let note = loadNote(id) {
             currentNote = note
             currentTags = store.tags(forNote: id).map(\.title)
         } else {
@@ -560,8 +589,9 @@ final class AppModel {
         scheduleSave()
     }
 
+    /// Called for actual changes only, so the (possibly huge) body is not compared.
     func updateBody(_ body: String) {
-        guard var note = currentNote, note.body != body else { return }
+        guard var note = currentNote else { return }
         note.body = body
         currentNote = note
         patchSummary(note)
@@ -581,19 +611,60 @@ final class AppModel {
         saveTask = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(600))
             guard !Task.isCancelled else { return }
-            self?.flushSave()
+            self?.saveInBackground()
         }
+    }
+
+    /// Saving a huge note (and indexing it for search) takes a good part of a second: typing pauses save on a queue
+    /// with their own connection. Everything else that touches the database waits for it first (`waitForSaves`).
+    @ObservationIgnored private let saveQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.save", qos: .userInitiated)
+    @ObservationIgnored private lazy var writer: SQLiteDB? = try? store.makeWriter()
+
+    private func saveInBackground() {
+        saveTask = nil
+        guard pendingSave, let note = currentNote else { return }
+        guard let writer else { return flushSave() }
+        pendingSave = false
+        nonisolated(unsafe) let db = writer
+        saveQueue.async { [weak self] in
+            var failure: String?
+            let time = Store.now()
+            do { try Store.saveNote(note, in: db, at: time) } catch { failure = "\(error)" }
+            let stamp = Store.BodyStamp(updatedTime: time, body: note.body)
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    if let failure {
+                        self.alert = AlertInfo(title: "Error", message: failure)
+                    } else {
+                        if self.currentNote?.id == note.id { self.loadedStamp = (note.id, stamp) }
+                        self.scheduleAutoSync()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Returns once background saves are written.
+    private func waitForSaves() {
+        saveQueue.sync {}
     }
 
     func flushSave() {
         saveTask?.cancel()
         saveTask = nil
+        waitForSaves()
         guard pendingSave, let note = currentNote else { return }
         pendingSave = false
-        perform { try store.saveNote(note) }
+        let time = Store.now()
+        perform {
+            try store.saveNote(note, at: time)
+            loadedStamp = (note.id, Store.BodyStamp(updatedTime: time, body: note.body))
+        }
     }
 
     private func perform(_ body: () throws -> Void) {
+        waitForSaves()
         do {
             try body()
             scheduleAutoSync()

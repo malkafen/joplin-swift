@@ -70,16 +70,21 @@ struct MarkdownRenderer {
     }
 
     func render(_ markdown: String, maxImageWidth: CGFloat = 640) -> NSAttributedString {
+        renderDocument(markdown, maxImageWidth: maxImageWidth).text
+    }
+
+    /// The rendered note, and whether it holds images or diagrams sized to `maxImageWidth`.
+    func renderDocument(_ markdown: String, maxImageWidth: CGFloat = 640) -> (text: NSAttributedString, sizedToWidth: Bool) {
         let (source, formulas) = MathExtractor.extract(markdown)
         let document = Document(parsing: source)
         let builder = AttributedBuilder(renderer: self, maxImageWidth: maxImageWidth, formulas: formulas)
         builder.collectHeadings(document)
         builder.blocks(document.children, BlockStyle())
         // Drop the trailing paragraph break and spacers.
-        while builder.out.string.hasSuffix("\n") {
+        while builder.out.length > 0, builder.out.mutableString.character(at: builder.out.length - 1) == 10 {
             builder.out.deleteCharacters(in: NSRange(location: builder.out.length - 1, length: 1))
         }
-        return builder.out
+        return (builder.out, builder.sizedToWidth)
     }
 
     /// GitHub-style heading anchor: lowercase, punctuation removed, spaces as dashes.
@@ -317,6 +322,9 @@ private final class AttributedBuilder {
     private var html = HTMLState()
     private var headings: [(level: Int, title: String, slug: String)] = []
     private var headingIndex = 0
+    /// Symbols drawn so far: making one is slow, and a long checklist needs thousands of the same.
+    private var symbols: [String: NSAttributedString] = [:]
+    private(set) var sizedToWidth = false
 
     private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
     private static let highlight = try! NSRegularExpression(pattern: "==(?=\\S)(.+?)(?<=\\S)==")
@@ -544,6 +552,7 @@ private final class AttributedBuilder {
 
     /// A diagram centred in its own paragraph, optionally on a card like code blocks.
     private func diagram(_ image: NSImage, card: Bool, _ b: BlockStyle) {
+        sizedToWidth = true
         var bb = b
         var width = maxImageWidth
         if card {
@@ -1022,8 +1031,8 @@ private final class AttributedBuilder {
 
     private func linkified(_ string: String, _ s: InlineStyle) {
         guard !string.isEmpty else { return }
-        guard s.link == nil, html.links.isEmpty, let detector = Self.linkDetector,
-              string.contains(".") || string.contains(":") else {
+        // Only web and mail links are kept below: text that cannot hold one skips the (slow) detector.
+        guard s.link == nil, html.links.isEmpty, let detector = Self.linkDetector, Self.mayHoldLink(string) else {
             append(string, s)
             return
         }
@@ -1042,6 +1051,23 @@ private final class AttributedBuilder {
             last = m.range.location + m.range.length
         }
         append(ns.substring(from: last), s)
+    }
+
+    /// Whether the text contains "@", "http" or "www." (any case).
+    private static func mayHoldLink(_ string: String) -> Bool {
+        var string = string
+        return string.withUTF8 { b in
+            for i in b.indices {
+                let c = b[i] | 0x20
+                if b[i] == UInt8(ascii: "@") { return true }
+                guard i + 3 < b.count else { continue }
+                if c == UInt8(ascii: "h"), b[i + 1] | 0x20 == UInt8(ascii: "t"), b[i + 2] | 0x20 == UInt8(ascii: "t"),
+                   b[i + 3] | 0x20 == UInt8(ascii: "p") { return true }
+                if c == UInt8(ascii: "w"), b[i + 1] | 0x20 == UInt8(ascii: "w"), b[i + 2] | 0x20 == UInt8(ascii: "w"),
+                   b[i + 3] == UInt8(ascii: ".") { return true }
+            }
+            return false
+        }
     }
 
     /// Puts formulas back into code spans, where they must stay literal.
@@ -1080,6 +1106,8 @@ private final class AttributedBuilder {
     }
 
     private func symbolAttachment(_ name: String, colors: [NSColor], font: NSFont) -> NSAttributedString? {
+        let key = "\(name)|\(colors)|\(font.fontName)|\(font.pointSize)"
+        if let cached = symbols[key] { return cached }
         let config = NSImage.SymbolConfiguration(pointSize: font.pointSize, weight: .regular)
             .applying(.init(paletteColors: colors))
         guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config) else {
@@ -1089,12 +1117,15 @@ private final class AttributedBuilder {
         attachment.image = image
         let size = image.size
         attachment.bounds = CGRect(x: 0, y: ((font.capHeight - size.height) / 2).rounded(), width: size.width, height: size.height)
-        return NSAttributedString(attachment: attachment)
+        let symbol = NSAttributedString(attachment: attachment)
+        symbols[key] = symbol
+        return symbol
     }
 
     private func imageAttachment(_ image: NSImage, width requested: CGFloat?, link: URL?, rounded: Bool = true) {
         let size = image.size
         guard size.width > 0, size.height > 0 else { return }
+        sizedToWidth = true
         let target = min(requested ?? size.width, maxImageWidth)
         let scale = target / size.width
         let bounds = CGRect(x: 0, y: 0, width: size.width * scale, height: size.height * scale)
