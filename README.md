@@ -39,7 +39,8 @@ Joplin Server account, after a minute of idling:
 
 ## Features
 
-- **Notebooks**: nested notebooks with emoji icons, drag & drop, trash with restore
+- **Notebooks**: nested notebooks with emoji icons, drag & drop, trash with restore (notebooks in the trash fold
+  under it)
 - **Notes and to-dos**: checkboxes in the list, completed to-dos sorted to the bottom, duplicate, move, copy link
 - **Markdown editor**: `NSTextView` with syntax highlighting (markup characters dimmed, fenced code coloured),
   native undo, spell checking and the find bar
@@ -53,11 +54,15 @@ Joplin Server account, after a minute of idling:
   - HTML that notes contain: `<img width>` (Joplin's resized images), `<kbd>`, `<mark>`, `<sup>`, `<sub>`,
     `<u>`, `<details>`, simple tables and lists
   - images from attachments and from the web (optional), scaled to the text width with rounded corners
+  - diagrams drawn natively, no JavaScript: Mermaid flowcharts, state and sequence diagrams and pie charts, and
+    draw.io diagrams (SVG from the Joplin draw.io plugin, `.drawio` files, ```` ```drawio ```` blocks)
 - **Fonts**: choose the font and size of the editor, the preview and code (any installed family or the system
   designs: SF Pro, New York, SF Rounded, SF Mono). <kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> /
   <kbd>⌘</kbd><kbd>0</kbd> scale the text. Lines are kept at a readable length in wide windows (optional).
 - **Layouts**: editor, preview, or side-by-side split (<kbd>⌃</kbd><kbd>L</kbd>)
-- **Search**: full-text search over all notes with SQLite FTS5, works for any language
+- **Search**: full-text search over all notes with SQLite FTS5, works for any language. The list shows the
+  text around the match; the words are highlighted in the list, the editor and the preview, the note scrolls to
+  the first match, and <kbd>⌘</kbd><kbd>G</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd> step through the matches
 - **Tags**: token field with completion of existing tags. Tags can be hidden in the sidebar
   (<kbd>⌃</kbd><kbd>⌘</kbd><kbd>T</kbd>, or collapse the section) and above notes (View menu or Settings).
 - **Attachments**: drop files or paste images. They are stored as Joplin resources and linked as `:/id`.
@@ -80,7 +85,12 @@ Joplin Server account, after a minute of idling:
 | Cycle layout | <kbd>⌃</kbd><kbd>L</kbd> | Insert date | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>T</kbd> |
 | Synchronise | <kbd>⌘</kbd><kbd>S</kbd> | Highlight | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>H</kbd> |
 | Bigger / smaller text | <kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> | Math formula | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>M</kbd> |
-| Show tags in sidebar | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>T</kbd> | | |
+| Show tags in sidebar | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>T</kbd> | Toggle sidebar | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>S</kbd> |
+| Search all notes | <kbd>⌥</kbd><kbd>⌘</kbd><kbd>F</kbd> | Next / previous match | <kbd>⌘</kbd><kbd>G</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd> |
+| Next / previous note | <kbd>⌥</kbd><kbd>⌘</kbd><kbd>↓</kbd> / <kbd>↑</kbd> | Duplicate note | <kbd>⌘</kbd><kbd>D</kbd> |
+| Edit title | <kbd>⌥</kbd><kbd>⌘</kbd><kbd>R</kbd> | Edit tags | <kbd>⌥</kbd><kbd>⌘</kbd><kbd>K</kbd> |
+| Mark to-do as done | <kbd>⌘</kbd><kbd>↩</kbd> | Switch note / to-do | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>D</kbd> |
+| Copy Markdown link | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>L</kbd> | | |
 
 ## Install
 
@@ -117,14 +127,15 @@ This project is an independent client, not a port of the Electron app. What work
 
 Release tags mirror the [upstream Joplin desktop releases](https://github.com/laurent22/joplin/releases)
 exactly (`v3.7.21`, …). A Joplin Native release with a given tag contains the changes of the upstream release
-with the same tag that apply to this client.
+with the same tag that apply to this client. Native-only releases between upstream releases add a revision
+number to the upstream tag they are based on (`v3.7.21-1`, `v3.7.21-2`, …).
 
 - **Upstream sync** ([`upstream-sync.yml`](.github/workflows/upstream-sync.yml)) runs daily. It opens a
   tracking issue labelled `upstream-sync` for each new upstream desktop release, linking its release notes and
   the upstream diff.
 - The applicable changes are ported through pull requests into `main`.
 - Pushing the matching tag runs [`release.yml`](.github/workflows/release.yml). The workflow refuses any tag
-  that is not an upstream release, builds and tests the app, and publishes the zip with its SHA-256. The release
+  that is not an upstream release (or a revision of one), builds and tests the app, and publishes the zip with its SHA-256. The release
   is marked pre-release when upstream's is.
 
 ## Development
@@ -170,6 +181,7 @@ Environment variables for scripted checks, for example over SSH (no screen-recor
 | `JN_SNAPSHOT_QUIT=1` | Quit after the snapshot |
 | `JN_SELECT_INDEX=N` | Select the N-th note in the list |
 | `JN_IMPORT_DESKTOP=1` | Import the Joplin Desktop profile on launch (or pass a profile path) |
+| `JN_SEARCH=word` | Start with this search |
 | `JN_LAYOUT=split` | Start in the `editor`, `split` or `preview` layout |
 | `JN_APPEARANCE=dark` | Force the `dark` or `light` appearance |
 | `JN_SCROLL=1` | Scroll editor and preview to a fraction of their height (0 top, 1 bottom) before the snapshot |

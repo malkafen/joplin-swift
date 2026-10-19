@@ -162,6 +162,7 @@ struct MarkdownPreview: NSViewRepresentable {
     var noteId: String
     var renderer: MarkdownRenderer
     var readableWidth: Bool
+    var highlights: [String] = []
     var onLink: (URL) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(onLink: onLink) }
@@ -204,14 +205,17 @@ struct MarkdownPreview: NSViewRepresentable {
         c.renderer = renderer
         guard let tv = c.textView else { return }
         tv.maxLineWidth = readableWidth ? renderer.typography.readableWidth : nil
-        let key = "\(renderer.typography)|\(renderer.loadsRemoteImages)|\(markdown)"
+        let key = "\(renderer.typography)|\(renderer.loadsRemoteImages)|\(highlights)|\(markdown)"
         guard c.renderedKey != key || c.noteId != noteId else { return }
         let sameNote = c.noteId == noteId
+        let newTerms = c.highlights != highlights
         c.markdown = markdown
+        c.highlights = highlights
         c.renderedKey = key
         c.noteId = noteId
         c.render(keepScroll: sameNote)
         if !sameNote { tv.scrollToBeginningOfDocument(nil) }
+        if !sameNote || newTerms { c.revealFirstMatch() }
     }
 
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
@@ -224,6 +228,8 @@ struct MarkdownPreview: NSViewRepresentable {
         weak var textView: PreviewTextView?
         var renderer: MarkdownRenderer?
         var markdown = ""
+        var highlights: [String] = []
+        private var firstMatch: NSRange?
         var renderedKey = ""
         var noteId = ""
         private var renderedWidth: CGFloat = 0
@@ -257,11 +263,23 @@ struct MarkdownPreview: NSViewRepresentable {
             guard let tv = textView, let renderer, let scroll = tv.enclosingScrollView else { return }
             let origin = scroll.contentView.bounds.origin
             renderedWidth = imageWidth
-            tv.textStorage?.setAttributedString(renderer.render(markdown, maxImageWidth: renderedWidth))
+            let text = NSMutableAttributedString(attributedString: renderer.render(markdown, maxImageWidth: renderedWidth))
+            firstMatch = SearchHighlight.apply(highlights, to: text)
+            tv.textStorage?.setAttributedString(text)
             if keepScroll {
                 scroll.contentView.scroll(to: origin)
                 scroll.reflectScrolledClipView(scroll.contentView)
             }
+        }
+
+        /// Scrolls the first search match into the middle of the view.
+        func revealFirstMatch() {
+            guard let tv = textView, let match = firstMatch, let layoutManager = tv.layoutManager,
+                  let container = tv.textContainer, let scroll = tv.enclosingScrollView else { return }
+            let glyphs = layoutManager.glyphRange(forCharacterRange: match, actualCharacterRange: nil)
+            let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
+            let y = rect.midY + tv.textContainerOrigin.y - scroll.contentView.bounds.height / 3
+            tv.scroll(NSPoint(x: 0, y: max(0, y)))
         }
 
         func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
@@ -281,6 +299,7 @@ struct MarkdownPreview: NSViewRepresentable {
 struct TagField: NSViewRepresentable {
     var tags: [String]
     var allTags: [String]
+    var onCreate: (NSTokenField) -> Void = { _ in }
     var onCommit: ([String]) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
@@ -299,6 +318,7 @@ struct TagField: NSViewRepresentable {
         field.cell?.wraps = false
         field.cell?.isScrollable = true
         field.objectValue = tags
+        onCreate(field)
         return field
     }
 

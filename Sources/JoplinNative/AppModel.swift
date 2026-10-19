@@ -174,6 +174,11 @@ final class AppModel {
         didSet { defaults.set(sidebarTagsExpanded, forKey: "sidebarTagsExpanded") }
     }
 
+    /// Whether notebooks in the trash are listed under it in the sidebar.
+    var trashExpanded = false {
+        didSet { defaults.set(trashExpanded, forKey: "trashExpanded") }
+    }
+
     var showNoteTags = true {
         didSet { defaults.set(showNoteTags, forKey: "showNoteTags") }
     }
@@ -236,6 +241,7 @@ final class AppModel {
     @ObservationIgnored private var pendingSave = false
     @ObservationIgnored private let defaults: UserDefaults
     @ObservationIgnored let pasteboard: NSPasteboard
+    @ObservationIgnored var findPasteboard = NSPasteboard(name: .find)
     @ObservationIgnored let openURL: (URL) -> Void
     @ObservationIgnored let syncTransport: HTTPTransport
     @ObservationIgnored private var syncTimer: Task<Void, Never>?
@@ -267,6 +273,7 @@ final class AppModel {
         showSidebarTags = defaults.object(forKey: "showSidebarTags") as? Bool ?? true
         sidebarTagsExpanded = defaults.object(forKey: "sidebarTagsExpanded") as? Bool ?? true
         showNoteTags = defaults.object(forKey: "showNoteTags") as? Bool ?? true
+        trashExpanded = defaults.bool(forKey: "trashExpanded")
         syncURL = store.setting("sync.url") ?? ""
         syncEmail = store.setting("sync.email") ?? ""
         syncPassword = store.setting("sync.password") ?? ""
@@ -339,6 +346,11 @@ final class AppModel {
         }
     }
 
+    /// Words of the active search, highlighted in the note list, the editor and the preview.
+    var searchTerms: [String] {
+        SearchHighlight.terms(searchText)
+    }
+
     var isTrashSelected: Bool { sidebarSelection == .trash && searchText.isEmpty }
 
     var listTitle: String {
@@ -371,6 +383,11 @@ final class AppModel {
 
     private func loadSelection() {
         flushSave()
+        // ⌘G / ⇧⌘G in the editor then step through the matches, as after a Find.
+        if let term = searchTerms.first, selectedNoteIDs.count == 1 {
+            findPasteboard.clearContents()
+            findPasteboard.setString(term, forType: .string)
+        }
         if selectedNoteIDs.count == 1, let id = selectedNoteIDs.first, let note = store.note(id: id) {
             currentNote = note
             currentTags = store.tags(forNote: id).map(\.title)
@@ -742,6 +759,52 @@ final class AppModel {
             return
         }
         updateBody(lines.joined(separator: "\n"))
+    }
+
+    // MARK: - Keyboard navigation
+
+    /// Selects the note above (-1) or below (+1) the current one in the list.
+    func selectAdjacentNote(_ step: Int) {
+        guard !notes.isEmpty else { return }
+        let current = notes.firstIndex { selectedNoteIDs.contains($0.id) }
+        let target = current.map { min(max($0 + step, 0), notes.count - 1) } ?? (step > 0 ? 0 : notes.count - 1)
+        selectedNoteIDs = [notes[target].id]
+    }
+
+    func toggleCurrentTodoCompleted() {
+        guard let note = currentNote, note.isTodo else { return }
+        setTodoCompleted(note.id, note.todoCompleted == 0)
+    }
+
+    func focusTitle() {
+        titleFocusRequest += 1
+    }
+
+    @ObservationIgnored weak var tagField: NSTokenField?
+
+    func focusTags() {
+        if !showNoteTags { showNoteTags = true }
+        DispatchQueue.main.async { [weak self] in
+            guard let field = self?.tagField else { return }
+            field.window?.makeFirstResponder(field)
+        }
+    }
+
+    /// Puts the cursor in the toolbar search field.
+    func focusSearch(in window: NSWindow? = NSApp.keyWindow ?? NSApp.mainWindow) {
+        guard let window else { return }
+        if let item = window.toolbar?.items.compactMap({ $0 as? NSSearchToolbarItem }).first {
+            item.beginSearchInteraction()
+            return
+        }
+        func find(_ view: NSView) -> NSSearchField? {
+            if let field = view as? NSSearchField { return field }
+            for sub in view.subviews { if let f = find(sub) { return f } }
+            return nil
+        }
+        if let root = window.contentView?.superview, let field = find(root) {
+            window.makeFirstResponder(field)
+        }
     }
 
     func cycleLayout() {

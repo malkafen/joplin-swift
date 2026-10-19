@@ -58,6 +58,10 @@ import Testing
         model.sidebarSelection = .trash
         model.trashFolder(try #require(model.folders.first))
         _ = render(ContentView().environment(model))
+        model.trashExpanded = true
+        model.searchText = "check"
+        _ = render(ContentView().environment(model))
+        model.searchText = ""
         #expect(model.currentNote?.deletedTime ?? 0 > 0)
         #expect(model.editor.textView?.isEditable == false)
     }

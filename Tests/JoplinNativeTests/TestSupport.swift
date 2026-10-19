@@ -24,10 +24,14 @@ final class ModelHarness {
     let pasteboard: NSPasteboard
     let server: FakeJoplinServer
     private(set) var opened: [URL] = []
-    private(set) lazy var model: AppModel = AppModel(store: store, defaults: defaults, pasteboard: pasteboard,
-                                                     syncTransport: server) { [unowned self] in
-        self.opened.append($0)
-    }
+    private(set) lazy var model: AppModel = {
+        let model = AppModel(store: store, defaults: defaults, pasteboard: pasteboard, syncTransport: server) { [unowned self] in
+            self.opened.append($0)
+        }
+        model.findPasteboard = findPasteboard
+        return model
+    }()
+    let findPasteboard = NSPasteboard(name: NSPasteboard.Name("jn-find-\(UUID().uuidString)"))
 
     init(welcome: Bool = true, server: FakeJoplinServer = FakeJoplinServer(), directory: URL = temporaryDirectory(),
          defaults configure: (UserDefaults) -> Void = { _ in }) throws {
@@ -43,5 +47,6 @@ final class ModelHarness {
 
     deinit {
         pasteboard.releaseGlobally()
+        findPasteboard.releaseGlobally()
     }
 }

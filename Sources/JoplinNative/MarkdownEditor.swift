@@ -135,6 +135,7 @@ struct MarkdownEditor: NSViewRepresentable {
     var noteId: String
     var typography: Typography
     var readableWidth: Bool
+    var highlights: [String] = []
     var isEditable: Bool
     var bridge: EditorBridge
     var onChange: (String) -> Void
@@ -187,6 +188,7 @@ struct MarkdownEditor: NSViewRepresentable {
     private func load(into tv: NSTextView, context: Context) {
         let c = context.coordinator
         c.highlighter.configure(typography)
+        c.highlighter.searchTerms = highlights
         tv.typingAttributes = c.highlighter.baseAttributes
         c.isLoading = true
         tv.string = text
@@ -196,6 +198,7 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.scrollToBeginningOfDocument(nil)
         c.noteId = noteId
         c.typography = typography
+        c.revealFirstMatch()
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
@@ -207,6 +210,10 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.maxLineWidth = readableWidth ? typography.readableWidth : nil
         if c.noteId != noteId {
             load(into: tv, context: context)
+        } else if c.highlighter.searchTerms != highlights {
+            c.highlighter.searchTerms = highlights
+            if let storage = tv.textStorage { c.highlighter.highlight(storage) }
+            c.revealFirstMatch()
         } else if c.typography != typography {
             c.typography = typography
             c.highlighter.configure(typography)
@@ -238,6 +245,14 @@ struct MarkdownEditor: NSViewRepresentable {
             self.parent = parent
         }
 
+        /// Shows the first search match with the system find indicator.
+        func revealFirstMatch() {
+            guard let tv = textView,
+                  let first = SearchHighlight.ranges(of: highlighter.searchTerms, in: tv.string).first else { return }
+            tv.scrollRangeToVisible(first)
+            if tv.window != nil { tv.showFindIndicator(for: first) }
+        }
+
         func textDidChange(_ notification: Notification) {
             guard !isLoading, let tv = textView else { return }
             parent.onChange(tv.string)
@@ -255,6 +270,8 @@ struct MarkdownEditor: NSViewRepresentable {
 /// the text reads like the rendered note, and fenced code is coloured like in the preview.
 final class MarkdownHighlighter {
     private(set) var baseAttributes: [NSAttributedString.Key: Any] = [:]
+    /// Words of the active search, marked like find results.
+    var searchTerms: [String] = []
     private var typography = Typography()
     private var baseFont = NSFont.systemFont(ofSize: 14)
     private var boldFont = NSFont.boldSystemFont(ofSize: 14)
@@ -378,6 +395,9 @@ final class MarkdownHighlighter {
             storage.addAttribute(.foregroundColor, value: syntax, range: open)
             if m.range(at: 4).length > 0 { storage.addAttribute(.foregroundColor, value: syntax, range: m.range(at: 4)) }
             CodeHighlighter.apply(language: info, to: storage, range: m.range(at: 3))
+        }
+        for r in SearchHighlight.ranges(of: searchTerms, in: text) where NSIntersectionRange(r, range).length > 0 {
+            storage.addAttribute(.backgroundColor, value: SearchHighlight.color, range: r)
         }
     }
 }

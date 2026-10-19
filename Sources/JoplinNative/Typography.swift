@@ -85,3 +85,43 @@ struct Typography: Equatable {
     /// Comfortable reading measure (about 75 characters of body text).
     var readableWidth: CGFloat { (size * 46).rounded() }
 }
+
+/// Finding and marking the words of a search in text.
+enum SearchHighlight {
+    static var color: NSColor { NSColor.systemYellow.withAlphaComponent(0.45) }
+
+    /// Search words without quotes; FTS matches prefixes, so these are matched as substrings.
+    static func terms(_ text: String) -> [String] {
+        let words = text.split(whereSeparator: { $0.isWhitespace })
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'*")) }
+            .filter { !$0.isEmpty }
+        var seen: Set<String> = []
+        return words.filter { seen.insert($0.lowercased()).inserted }
+    }
+
+    /// Ranges of all terms in `string`, ignoring case and diacritics, in text order.
+    static func ranges(of terms: [String], in string: String) -> [NSRange] {
+        guard !terms.isEmpty, !string.isEmpty else { return [] }
+        let ns = string as NSString
+        var result: [NSRange] = []
+        for term in terms {
+            var search = NSRange(location: 0, length: ns.length)
+            while search.length > 0 {
+                let r = ns.range(of: term, options: [.caseInsensitive, .diacriticInsensitive], range: search)
+                guard r.location != NSNotFound, r.length > 0 else { break }
+                result.append(r)
+                let next = r.location + r.length
+                search = NSRange(location: next, length: ns.length - next)
+            }
+        }
+        return result.sorted { $0.location < $1.location }
+    }
+
+    /// Adds the highlight background to every match; returns the first match.
+    @discardableResult
+    static func apply(_ terms: [String], to text: NSMutableAttributedString) -> NSRange? {
+        let found = ranges(of: terms, in: text.string)
+        for r in found { text.addAttribute(.backgroundColor, value: color, range: r) }
+        return found.first
+    }
+}

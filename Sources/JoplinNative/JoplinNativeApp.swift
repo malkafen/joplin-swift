@@ -14,7 +14,10 @@ struct JoplinNativeApp: App {
                 .frame(minWidth: 860, minHeight: 480)
         }
         .defaultSize(width: 1240, height: 780)
-        .commands { AppCommands(model: model) }
+        .commands {
+            SidebarCommands()
+            AppCommands(model: model)
+        }
 
         Settings {
             SettingsView()
@@ -54,6 +57,11 @@ struct AppCommands: Commands {
                 .keyboardShortcut("n", modifiers: [.command, .shift])
             Button("New Notebook…") { model.promptNewFolder() }
                 .keyboardShortcut("n", modifiers: [.command, .option])
+        }
+
+        CommandGroup(after: .textEditing) {
+            Button("Search All Notes") { model.focusSearch() }
+                .keyboardShortcut("f", modifiers: [.command, .option])
         }
 
         CommandGroup(replacing: .saveItem) {
@@ -103,12 +111,34 @@ struct AppCommands: Commands {
         }
 
         CommandMenu("Note") {
+            Button("Next Note") { model.selectAdjacentNote(1) }
+                .keyboardShortcut(.downArrow, modifiers: [.command, .option])
+            Button("Previous Note") { model.selectAdjacentNote(-1) }
+                .keyboardShortcut(.upArrow, modifiers: [.command, .option])
+            Divider()
+            Button("Edit Title") { model.focusTitle() }
+                .keyboardShortcut("r", modifiers: [.command, .option])
+                .disabled(model.currentNote == nil)
+            Button("Edit Tags") { model.focusTags() }
+                .keyboardShortcut("k", modifiers: [.command, .option])
+                .disabled(model.currentNote == nil)
             Button("Attach File…") { model.attachFilesWithPanel() }
                 .keyboardShortcut("a", modifiers: [.command, .shift])
                 .disabled(model.currentNote == nil)
+            Divider()
+            Button(model.currentNote?.todoCompleted ?? 0 > 0 ? "Mark as Not Done" : "Mark as Done") {
+                model.toggleCurrentTodoCompleted()
+            }
+            .keyboardShortcut(.return, modifiers: .command)
+            .disabled(model.currentNote?.isTodo != true)
             Button(model.currentNote?.isTodo == true ? "Switch to Note" : "Switch to To-do") { model.toggleCurrentIsTodo() }
+                .keyboardShortcut("d", modifiers: [.command, .shift])
                 .disabled(model.currentNote == nil)
+            Button("Duplicate") { model.duplicate(model.selectedNoteIDs) }
+                .keyboardShortcut("d")
+                .disabled(model.selectedNoteIDs.isEmpty || model.isTrashSelected)
             Button("Copy Markdown Link") { model.copyMarkdownLinks(model.selectedNoteIDs) }
+                .keyboardShortcut("l", modifiers: [.command, .shift])
                 .disabled(model.selectedNoteIDs.isEmpty)
             Divider()
             Button(model.isTrashSelected ? "Delete Permanently…" : "Move to Trash") { model.deleteSelectedNotes() }
@@ -175,6 +205,7 @@ enum Snapshot {
                 }
             }
         }
+        if let query = env["JN_SEARCH"] { model.searchText = query }
         if let layout = env["JN_LAYOUT"].flatMap(EditorLayout.init(rawValue:)) { model.layout = layout }
         if let appearance = env["JN_APPEARANCE"] {
             NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)

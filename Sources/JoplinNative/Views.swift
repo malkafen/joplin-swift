@@ -99,25 +99,36 @@ struct SidebarView: View {
             }
 
             Section {
-                Label("Trash", systemImage: "trash")
-                    .badge(model.trashCount)
-                    .tag(SidebarItem.trash)
-                    .contextMenu {
-                        Button("Empty Trash", role: .destructive) { model.emptyTrash() }
-                    }
-                ForEach(model.trashedFolders) { folder in
-                    Label(folder.title, systemImage: "folder")
-                        .foregroundStyle(.secondary)
-                        .padding(.leading, 12)
-                        .contextMenu {
-                            Button("Restore Notebook") { model.restoreFolder(folder) }
-                            Button("Delete Permanently…", role: .destructive) { model.deleteFolderPermanently(folder) }
+                if model.trashedFolders.isEmpty {
+                    trashRow
+                } else {
+                    // Notebooks in the trash fold under it like sub-notebooks; collapsed by default.
+                    DisclosureGroup(isExpanded: $model.trashExpanded) {
+                        ForEach(model.trashedFolders) { folder in
+                            Label(folder.title, systemImage: "folder")
+                                .foregroundStyle(.secondary)
+                                .contextMenu {
+                                    Button("Restore Notebook") { model.restoreFolder(folder) }
+                                    Button("Delete Permanently…", role: .destructive) { model.deleteFolderPermanently(folder) }
+                                }
                         }
+                    } label: {
+                        trashRow
+                    }
                 }
             }
         }
         .listStyle(.sidebar)
         .safeAreaInset(edge: .bottom, spacing: 0) { SyncStatusBar() }
+    }
+
+    private var trashRow: some View {
+        Label("Trash", systemImage: "trash")
+            .badge(model.trashCount)
+            .tag(SidebarItem.trash)
+            .contextMenu {
+                Button("Empty Trash", role: .destructive) { model.emptyTrash() }
+            }
     }
 
     @ViewBuilder
@@ -326,7 +337,7 @@ struct NoteRow: View {
                     .labelsHidden()
             }
             VStack(alignment: .leading, spacing: 3) {
-                Text(note.title.isEmpty ? "Untitled" : note.title)
+                Text(highlighted(note.title.isEmpty ? "Untitled" : note.title))
                     .font(.system(size: 13, weight: .semibold))
                     .strikethrough(done)
                     .foregroundStyle(done ? .secondary : .primary)
@@ -334,7 +345,7 @@ struct NoteRow: View {
                 HStack(spacing: 6) {
                     Text(shortDate(note.userUpdatedTime))
                         .foregroundStyle(.primary.opacity(0.75))
-                    Text(note.snippet.isEmpty ? "No additional text" : note.snippet)
+                    Text(highlighted(note.snippet.isEmpty ? "No additional text" : note.snippet))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
                 }
@@ -342,6 +353,19 @@ struct NoteRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    /// Marks the words of the active search.
+    private func highlighted(_ text: String) -> AttributedString {
+        var result = AttributedString(text)
+        let ranges = SearchHighlight.ranges(of: model.searchTerms, in: text)
+        for r in ranges {
+            guard let range = Range(r, in: text), let lower = AttributedString.Index(range.lowerBound, within: result),
+                  let upper = AttributedString.Index(range.upperBound, within: result) else { continue }
+            result[lower..<upper].backgroundColor = Color(nsColor: SearchHighlight.color)
+            result[lower..<upper].foregroundColor = Color(nsColor: .labelColor)
+        }
+        return result
     }
 }
 
@@ -467,7 +491,9 @@ struct NoteEditorView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "number")
                             .foregroundStyle(.tertiary)
-                        TagField(tags: model.currentTags, allTags: model.tags.map(\.title)) { model.setCurrentTags($0) }
+                        TagField(tags: model.currentTags, allTags: model.tags.map(\.title), onCreate: { model.tagField = $0 }) {
+                            model.setCurrentTags($0)
+                        }
                             .frame(minWidth: 140, maxWidth: 360)
                     }
                 }
@@ -507,6 +533,7 @@ struct NoteEditorView: View {
             noteId: note.id,
             typography: model.editorTypography,
             readableWidth: model.readableWidth,
+            highlights: model.searchTerms,
             isEditable: !inTrash,
             bridge: model.editor,
             onChange: { model.updateBody($0) },
@@ -517,7 +544,7 @@ struct NoteEditorView: View {
 
     private func previewPane(_ note: Note) -> some View {
         MarkdownPreview(markdown: note.body, noteId: note.id, renderer: model.renderer,
-                        readableWidth: model.readableWidth, onLink: { model.handleLink($0) })
+                        readableWidth: model.readableWidth, highlights: model.searchTerms, onLink: { model.handleLink($0) })
     }
 }
 
