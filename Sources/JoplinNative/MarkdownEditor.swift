@@ -150,6 +150,7 @@ struct MarkdownEditor: NSViewRepresentable {
     var highlights: [String] = []
     var vimMode = false
     var onVimMode: (VimEngine.Mode) -> Void = { _ in }
+    var onVimCommandLine: (String) -> Void = { _ in }
     var isEditable: Bool
     var bridge: EditorBridge
     var onChange: (String) -> Void
@@ -205,11 +206,14 @@ struct MarkdownEditor: NSViewRepresentable {
             let engine = VimEngine(textView: tv)
             let report = onVimMode
             engine.onModeChange = { report($0) }
+            let reportLine = onVimCommandLine
+            engine.onCommandLine = { reportLine($0) }
             tv.vim = engine
             engine.reset()
             report(engine.mode)
         } else if !vimMode, let engine = tv.vim {
             tv.vim = nil
+            engine.clearHighlights()
             if engine.mode != .insert { tv.setSelectedRange(NSRange(location: tv.selectedRange().location, length: 0)) }
         }
     }

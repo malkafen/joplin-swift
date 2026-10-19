@@ -208,12 +208,17 @@ final class AppModel {
     var vimMode = false {
         didSet {
             defaults.set(vimMode, forKey: "vimMode")
-            if !vimMode { vimState = .insert }
+            if !vimMode {
+                vimState = .insert
+                vimCommandLine = ""
+            }
         }
     }
 
     /// Mode shown in the editor's status label.
     var vimState: VimEngine.Mode = .normal
+    /// Vim's command line: the search being typed, the match count or an error.
+    var vimCommandLine = ""
 
     /// Whether notebooks in the trash are listed under it in the sidebar.
     var trashExpanded = false {
@@ -1021,8 +1026,15 @@ final class AppModel {
         flushSave()
         isSyncing = true
         defer { isSyncing = false }
-        repeat {
-            syncRequestedWhileRunning = false
+        // The run is its own task: cancelling the caller (the auto-sync delay or the timer, which may be the
+        // very task that called us) must not abort the HTTP requests half-way with NSURLErrorCancelled.
+        await Task { await runSyncs() }.value
+    }
+
+    /// Syncs, then again while requests came in meanwhile (including ones made before this task got to run).
+    private func runSyncs() async {
+        var again = true
+        while again {
             do {
                 let client = try JoplinServerClient(baseURL: syncURL, email: syncEmail, password: syncPassword, transport: syncTransport)
                 let report = try await SyncEngine(store: store, client: client).sync()
@@ -1039,7 +1051,9 @@ final class AppModel {
                 syncDetail = "\(error)"
                 syncRequestedWhileRunning = false
             }
-        } while syncRequestedWhileRunning
+            again = syncRequestedWhileRunning
+            syncRequestedWhileRunning = false
+        }
     }
 
     func requestSync() {

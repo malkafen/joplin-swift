@@ -111,6 +111,55 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
 
     private func cursor(_ tv: NSTextView) -> Int { tv.selectedRange().location }
 
+    @Test func search() throws {
+        let (tv, vim, window) = setup("foo bar\nFoo food\nbar foo")
+        defer { window.close() }
+        // Typing lights every match and moves to the next one; Enter keeps them lit.
+        keys(vim, "/fo")
+        #expect(vim.commandLine == "/fo")
+        #expect(cursor(tv) == 8) // lower-case pattern ignores case
+        #expect(vim.highlightedRanges.count == 4)
+        keys(vim, "o\r")
+        #expect(vim.commandLine == "/foo  [2/4]")
+        #expect(vim.highlightedRanges.count == 4)
+        let lm = try #require(tv.layoutManager)
+        #expect(lm.temporaryAttribute(.backgroundColor, atCharacterIndex: 13, effectiveRange: nil) != nil)
+        #expect(lm.temporaryAttribute(.backgroundColor, atCharacterIndex: 5, effectiveRange: nil) == nil)
+        keys(vim, "n"); #expect(cursor(tv) == 12)
+        keys(vim, "n"); #expect(cursor(tv) == 21)
+        keys(vim, "n"); #expect(cursor(tv) == 0)
+        #expect(vim.commandLine.hasSuffix("search hit BOTTOM, continuing at TOP"))
+        keys(vim, "N"); #expect(cursor(tv) == 21)
+        keys(vim, "2n"); #expect(cursor(tv) == 8)
+        // Upper case makes the search case-sensitive (smartcase).
+        keys(vim, "/Foo\r"); #expect(cursor(tv) == 8)
+        #expect(vim.commandLine.hasPrefix("/Foo  [1/1]"))
+        keys(vim, "?bar\r"); #expect(cursor(tv) == 4)
+        keys(vim, "n"); #expect(cursor(tv) == 17) // "?" searches backwards and wraps
+        // Esc while typing goes back to where the search started.
+        keys(vim, "/zzz"); #expect(vim.highlightedRanges.isEmpty)
+        keys(vim, "\u{1B}"); #expect(cursor(tv) == 17)
+        #expect(vim.highlightedRanges.count == 2)
+        keys(vim, "/zzz\r")
+        #expect(vim.commandLine == "E486: Pattern not found: zzz")
+        #expect(VimEngine.isError(vim.commandLine))
+        // "*" matches the whole word under the cursor.
+        keys(vim, "gg*"); #expect(cursor(tv) == 8)
+        #expect(vim.highlightedRanges.count == 3) // not "food"
+        keys(vim, "#"); #expect(cursor(tv) == 0)
+        // Edits keep the highlights in step; Esc and :noh hide them.
+        keys(vim, "ifoo \u{1B}")
+        #expect(vim.highlightedRanges.count == 4)
+        keys(vim, "\u{1B}"); #expect(vim.highlightedRanges.isEmpty)
+        keys(vim, "n"); #expect(vim.highlightedRanges.count == 4)
+        keys(vim, ":noh\r"); #expect(vim.highlightedRanges.isEmpty)
+        // ":3" goes to line 3, unknown commands report an error.
+        keys(vim, ":3\r"); #expect(cursor(tv) == 21)
+        keys(vim, ":nope\r"); #expect(vim.commandLine == "E492: Not an editor command: nope")
+        // Highlights never become part of the text's attributes.
+        #expect(tv.textStorage?.attribute(.backgroundColor, at: 9, effectiveRange: nil) == nil)
+    }
+
     @Test func motions() {
         let (tv, vim, window) = setup("one two-three  four\n  second line\n\nlast")
         defer { window.close() }
@@ -262,9 +311,15 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         tv.setSelectedRange(NSRange(location: 2, length: 0))
         vim.normalizeSelection()
         #expect(tv.selectedRange().length == 1)
-        keys(vim, "/")
-        keys(vim, "n")
-        keys(vim, "N")
+        // The command line takes typed keys, Backspace, ⌘ shortcuts pass through, Esc closes it.
+        #expect(vim.handle(keyEvent("/", keyCode: 44)))
+        #expect(vim.handle(keyEvent("q", keyCode: 12)))
+        #expect(vim.commandLine == "/q")
+        #expect(vim.handle(keyEvent("\u{7F}", keyCode: 51)))
+        #expect(vim.commandLine == "/")
+        #expect(!vim.handle(keyEvent("s", keyCode: 1, flags: .command)))
+        #expect(vim.handle(keyEvent("\u{1B}", keyCode: 53)))
+        #expect(vim.commandLine.isEmpty)
         // The text view routes keys through the engine.
         (tv as? MarkdownTextView)?.keyDown(with: keyEvent("x", keyCode: 7))
         #expect(tv.string.count == 6)
