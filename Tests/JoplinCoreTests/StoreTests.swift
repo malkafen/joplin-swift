@@ -111,6 +111,8 @@ import Testing
         try store.trashNotes(ids: [trashed.id])
         #expect(store.noteCountsByFolder() == [f.id: 1])
         #expect(store.totalNoteCount == 1)
+        #expect(store.trashedNoteCount == 1)
+        #expect(store.trashedNoteCount == store.notes(filter: .trash, sort: .updated).count)
     }
 
     @Test func trashAndRestoreFolders() throws {

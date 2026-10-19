@@ -461,7 +461,7 @@ struct NoteEditorView: View {
                         }
                     }
                     .pickerStyle(.segmented)
-                    .help("Editor layout (⌃L)")
+                    .help(model.hotkey(for: .cycleLayout).map { "Editor layout (\($0.display))" } ?? "Editor layout")
 
                     Button {
                         model.attachFilesWithPanel()

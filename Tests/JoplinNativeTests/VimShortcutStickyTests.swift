@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import Foundation
 @testable import JoplinCore
 import SwiftUI
@@ -23,8 +24,26 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         #expect(Hotkey(storage: "hyper+x") == nil)
         #expect(Hotkey(key: "1", command: true).keyboardShortcut != nil)
         #expect(Hotkey(key: "up", command: true).keyboardShortcut?.key == .upArrow)
-        #expect(Hotkey(key: "f5").keyboardShortcut == nil)
         #expect(Hotkey(key: "", command: true).keyboardShortcut == nil)
+        #expect(Hotkey(key: "f13").keyboardShortcut == nil)
+    }
+
+    @Test func functionKeysBecomeMenuShortcuts() throws {
+        let f5 = try #require(Hotkey(key: "f5", control: true).keyboardShortcut)
+        #expect(f5.key.character == Character(UnicodeScalar(NSF5FunctionKey)!))
+        #expect(f5.modifiers == .control)
+        #expect(Hotkey(key: "f1").keyboardShortcut?.key.character == Character(UnicodeScalar(NSF1FunctionKey)!))
+        #expect(Hotkey(key: "f12").keyboardShortcut?.key.character == Character(UnicodeScalar(NSF12FunctionKey)!))
+        #expect(Hotkey(key: "f5").display == "F5")
+    }
+
+    @Test func plusKeySurvivesStorage() {
+        let plus = Hotkey(key: "+", command: true, control: true)
+        #expect(plus.storage == "ctrl+cmd++")
+        #expect(Hotkey(storage: plus.storage) == plus)
+        #expect(Hotkey(storage: "+") == Hotkey(key: "+"))
+        #expect(Hotkey(storage: "cmd+") == nil)
+        #expect(Hotkey(storage: "ctrl+opt+l") == Hotkey(key: "l", control: true, option: true))
     }
 
     @Test func fromEvents() {
@@ -32,6 +51,31 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         #expect(Hotkey(event: keyEvent("a", keyCode: 0)) == nil) // plain letter
         #expect(Hotkey(event: keyEvent("", keyCode: 123, flags: [.option]))?.key == "left")
         #expect(Hotkey(event: keyEvent("", keyCode: 96))?.key == "f5") // function key alone
+    }
+
+    /// With a Cyrillic layout active the L key types "д"; the shortcut is still recorded on L.
+    @Test func eventsAreReadOnTheLatinKey() {
+        let event = keyEvent("\u{0C}", keyCode: 37, flags: [.control, .option], ignoring: "д")
+        #expect(Hotkey(event: event) == Hotkey(key: "l", control: true, option: true))
+        #expect(KeyLayout.latinCharacter(keyCode: 37) == "l")
+        #expect(KeyLayout.latinCharacter(keyCode: 18) == "1")
+    }
+
+    @Test func storedCyrillicKeysAreMigrated() throws {
+        let russian = KeyLayout.nonLatinLayouts.filter { source in
+            let id = TISGetInputSourceProperty(source, kTISPropertyInputSourceID)
+                .map { Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String } ?? ""
+            return id.hasSuffix(".Russian")
+        }
+        #expect(Hotkey(key: "l", control: true).latinized() == nil) // already Latin
+        #expect(Hotkey(key: "left", control: true).latinized() == nil)
+        guard !russian.isEmpty else { return } // the Russian layout is not enabled on this Mac
+        #expect(Hotkey(key: "д", control: true, option: true).latinized(layouts: russian) == Hotkey(key: "l", control: true, option: true))
+        #expect(Hotkey(key: "й", command: true).latinized(layouts: russian) == Hotkey(key: "q", command: true))
+
+        let h = try ModelHarness(welcome: false) { $0.set("ctrl+opt+д", forKey: "shortcut.cycleLayout") }
+        #expect(h.model.hotkey(for: .cycleLayout) == Hotkey(key: "l", control: true, option: true))
+        #expect(h.defaults.string(forKey: "shortcut.cycleLayout") == "ctrl+opt+l")
     }
 
     @Test func modelShortcuts() throws {
@@ -280,6 +324,33 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         keys(vim, "vs!\u{1B}")
         keys(vim, "v\u{1B}"); #expect(vim.mode == .normal)
         keys(vim, "V"); keys(vim, "V"); #expect(vim.mode == .normal)
+    }
+
+    /// With the Russian layout active the command keys still work by position; f, t, r and the search take the
+    /// Cyrillic characters themselves.
+    @Test func commandsWithANonLatinLayout() {
+        let (tv, vim, window) = setup("один\nдва\nтри")
+        defer { window.close() }
+        vim.nonLatinLayoutActive = { true }
+        #expect(vim.handle(keyEvent("о", keyCode: 38))) // j
+        #expect(cursor(tv) == 5)
+        #expect(vim.handle(keyEvent("Р", keyCode: 4, flags: .shift))) // H is not a motion here: ignored
+        #expect(vim.handle(keyEvent("а", keyCode: 3))) // f…
+        #expect(vim.handle(keyEvent("а", keyCode: 3))) // …а: the argument stays Cyrillic
+        #expect(cursor(tv) == 7)
+        #expect(vim.handle(keyEvent("в", keyCode: 2))) // d
+        #expect(vim.handle(keyEvent("в", keyCode: 2))) // dd
+        #expect(tv.string == "один\nтри")
+        #expect(vim.handle(keyEvent("\u{04}", keyCode: 2, flags: .control, ignoring: "в"))) // ⌃D
+        #expect(vim.handle(keyEvent("\u{1B}", keyCode: 33, flags: .control, ignoring: "х"))) // ⌃[ is Esc
+        #expect(vim.mode == .normal)
+        #expect(vim.handle(keyEvent("ш", keyCode: 34))) // i
+        #expect(vim.mode == .insert)
+        #expect(!vim.handle(keyEvent("ш", keyCode: 34))) // typing in insert mode is untouched
+        vim.nonLatinLayoutActive = { false }
+        #expect(vim.handle(keyEvent("\u{1B}", keyCode: 53)))
+        #expect(vim.handle(keyEvent("о", keyCode: 38))) // a Latin layout: "о" is not a command
+        #expect(vim.mode == .normal)
     }
 
     @Test func eventsAndModes() {

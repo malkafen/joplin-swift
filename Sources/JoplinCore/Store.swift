@@ -243,6 +243,11 @@ public final class Store {
         Int((try? db.scalarInt("SELECT COUNT(*) FROM notes WHERE deleted_time = 0 AND is_conflict = 0")) ?? 0)
     }
 
+    /// Notes listed in the trash.
+    public var trashedNoteCount: Int {
+        Int((try? db.scalarInt("SELECT COUNT(*) FROM notes WHERE deleted_time > 0 AND encryption_applied = 0")) ?? 0)
+    }
+
     @discardableResult
     public func createNote(parentId: String, title: String = "", body: String = "", isTodo: Bool = false) throws -> Note {
         let now = Store.now()

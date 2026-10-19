@@ -48,6 +48,30 @@ import Testing
         #expect(second == SyncReport())
     }
 
+    @Test func manyItemsAreFetchedConcurrently() async throws {
+        let a = try makeStore()
+        let folder = try a.createFolder(title: "Bulk")
+        var ids: [String] = []
+        for i in 0..<(SyncEngine.parallelDownloads * 3 + 1) {
+            ids.append(try a.createNote(parentId: folder.id, title: "n\(i)", body: "body \(i)").id)
+        }
+        try await sync(a)
+        server.pageSize = 10
+
+        let b = try makeStore()
+        let report = try await sync(b)
+        #expect(report.downloaded == ids.count + 1)
+        for (i, id) in ids.enumerated() { #expect(b.note(id: id)?.body == "body \(i)") }
+        #expect(try await sync(b) == SyncReport())
+
+        // A file listed in the delta but gone by the time it is fetched is skipped.
+        let names = [ids[0], ids[1], String(repeating: "f", count: 32)].map { "\($0).md" }
+        let contents = try await engine(b).fetch(names)
+        #expect(contents.count == 3)
+        #expect(contents[names[2]] == .some(nil))
+        #expect(try await engine(b).fetch([]).isEmpty)
+    }
+
     @Test func twoClientsExchangeNotesTagsAndAttachments() async throws {
         let a = try makeStore()
         let b = try makeStore()

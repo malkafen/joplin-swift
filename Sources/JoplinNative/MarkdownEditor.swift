@@ -356,15 +356,79 @@ final class MarkdownHighlighter {
         configure(Typography())
     }
 
-    /// Re-highlights the whole document; small documents are cheap enough, large ones only refresh the edited paragraphs.
+    /// Fenced code and display math found by the last pass, and the length of the text then. These are the only
+    /// constructs that span lines, so an edit that leaves them in place only needs its own paragraph refreshed.
+    private var blocks: [NSRange] = []
+    private var highlightedLength: Int?
+
+    private func multilineBlocks(in text: String, length: Int) -> [NSRange] {
+        let all = NSRange(location: 0, length: length)
+        let ns = text as NSString
+        let spanning = math.matches(in: text, range: all).map(\.range)
+            .filter { ns.rangeOfCharacter(from: .newlines, range: $0).location != NSNotFound }
+        return (fence.matches(in: text, range: all).map(\.range) + spanning).sorted { $0.location < $1.location }
+    }
+
+    /// Whether the edit kept every block: unchanged before it, shifted after it, resized when it contains the edit.
+    /// A block that started or ended inside the replaced text has become another one.
+    private func blocksSurvive(_ new: [NSRange], edited: NSRange, delta: Int) -> Bool {
+        guard new.count == blocks.count else { return false }
+        let oldEditEnd = NSMaxRange(edited) - delta
+        for (old, cur) in zip(blocks, new) {
+            if NSMaxRange(old) < edited.location {
+                if old != cur { return false }
+            } else if old.location > oldEditEnd {
+                if cur != NSRange(location: old.location + delta, length: old.length) { return false }
+            } else if old.location > edited.location || NSMaxRange(old) < oldEditEnd
+                        || cur != NSRange(location: old.location, length: old.length + delta) {
+                return false
+            }
+        }
+        return true
+    }
+
+    /// Whole lines around `range`. Only "\n" ends a line, as in the patterns: `[^\n]` runs through "\r" and U+2028,
+    /// which `paragraphRange(for:)` would split at.
+    private static func lines(around range: NSRange, in ns: NSString) -> NSRange {
+        let before = ns.range(of: "\n", options: .backwards, range: NSRange(location: 0, length: range.location))
+        let start = before.location == NSNotFound ? 0 : NSMaxRange(before)
+        let tail = NSMaxRange(range)
+        let after = ns.range(of: "\n", range: NSRange(location: tail, length: ns.length - tail))
+        let end = after.location == NSNotFound ? ns.length : NSMaxRange(after)
+        return NSRange(location: start, length: end - start)
+    }
+
+    /// The edited lines grown to whole blocks, or nil when the document has to be redone.
+    private func refreshRange(for edited: NSRange, _ ns: NSString, blocks new: [NSRange]) -> NSRange? {
+        let location = min(edited.location, ns.length)
+        let clamped = NSRange(location: location, length: min(edited.length, ns.length - location))
+        if let previous = highlightedLength, !blocksSurvive(new, edited: clamped, delta: ns.length - previous) { return nil }
+        // One character more: an inserted line break starts a new line after the edit.
+        var range = Self.lines(around: NSRange(location: location, length: min(clamped.length + 1, ns.length - location)), in: ns)
+        var grown = true
+        while grown {
+            grown = false
+            for b in new where NSIntersectionRange(b, range).length > 0 || NSLocationInRange(range.location, b) {
+                let union = Self.lines(around: NSUnionRange(range, b), in: ns)
+                if union != range {
+                    range = union
+                    grown = true
+                }
+            }
+        }
+        return range
+    }
+
+    /// Highlights the whole document, or after an edit only the paragraphs (and code blocks) it touched.
     func highlight(_ storage: NSTextStorage, edited: NSRange? = nil) {
         let ns = storage.string as NSString
-        var range = NSRange(location: 0, length: ns.length)
-        if let edited, ns.length > 60_000 {
-            range = ns.paragraphRange(for: NSRange(location: min(edited.location, ns.length), length: min(edited.length, ns.length - min(edited.location, ns.length))))
-        }
-        guard range.length > 0 else { return }
         let text = storage.string
+        let found = multilineBlocks(in: text, length: ns.length)
+        var range = NSRange(location: 0, length: ns.length)
+        if let edited, let local = refreshRange(for: edited, ns, blocks: found) { range = local }
+        blocks = found
+        highlightedLength = ns.length
+        guard range.length > 0 else { return }
         let syntax = NSColor.tertiaryLabelColor
 
         storage.setAttributes(baseAttributes, range: range)

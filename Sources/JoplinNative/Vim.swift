@@ -216,9 +216,20 @@ final class VimEngine {
     // MARK: Key handling
 
     /// Handles a key press; returns false to let the text view process it.
+    /// Whether a layout without Latin letters is active; replaced in tests.
+    var nonLatinLayoutActive: () -> Bool = { KeyLayout.isNonLatinLayoutActive }
+
+    /// With a Cyrillic (or other non-Latin) layout active, letters typed as commands mean the key at the same place in
+    /// the Latin layout, as Vim's 'langmap' does: "о" is j, "в" with ⌃ is ⌃D.
+    private func latinKeys(_ event: NSEvent, _ chars: String, shift: Bool) -> String {
+        guard !chars.unicodeScalars.allSatisfy(\.isASCII), nonLatinLayoutActive(),
+              let latin = KeyLayout.latinTyped(keyCode: event.keyCode, shift: shift) else { return chars }
+        return latin
+    }
+
     func handle(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .control, .option])
-        let bare = event.charactersIgnoringModifiers?.lowercased() ?? ""
+        let bare = latinKeys(event, event.charactersIgnoringModifiers?.lowercased() ?? "", shift: false)
         if prompt != nil { return handlePrompt(event, flags: flags, bare: bare) }
         if flags.contains(.command) { return false }
         if event.keyCode == 53 { return handle(key: "\u{1B}") } // Esc
@@ -239,7 +250,10 @@ final class VimEngine {
         default: return false // arrows, Tab, Home… keep their usual meaning
         }
         guard let chars = event.characters, !chars.isEmpty else { return true }
-        for c in chars { handle(key: String(c)) }
+        // The character after f, t or r is text to find or put, not a command.
+        let argument = pending.last.map { "fFtTr".contains($0) } ?? false
+        let keys = argument ? chars : latinKeys(event, chars, shift: event.modifierFlags.contains(.shift))
+        for c in keys { handle(key: String(c)) }
         return true
     }
 
