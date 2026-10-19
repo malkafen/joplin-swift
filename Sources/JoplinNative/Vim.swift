@@ -165,7 +165,8 @@ final class VimEngine {
             visualCursor = p
             return
         }
-        tv.scrollRangeToVisible(NSRange(location: p, length: 0))
+        // Off-window, AppKit defers the scroll to a block that leaks if the view goes away before layout.
+        if tv.window != nil { tv.scrollRangeToVisible(NSRange(location: p, length: 0)) }
     }
 
     /// Cursor end of a visual selection (the selection itself always starts at its lower end).
