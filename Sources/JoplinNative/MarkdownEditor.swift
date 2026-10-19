@@ -79,10 +79,20 @@ final class EditorBridge {
 }
 
 /// NSTextView subclass that turns dropped/pasted files and images into Joplin resources.
-final class MarkdownTextView: NSTextView {
+final class MarkdownTextView: NSTextView, ReadableWidth {
     var onDropFiles: (([URL]) -> String?)?
     var onPasteImage: ((Data) -> String?)?
     var pasteboard = NSPasteboard.general
+    var maxLineWidth: CGFloat? {
+        didSet { if oldValue != maxLineWidth { updateReadableInset() } }
+    }
+    let minimumInset = NSSize(width: 24, height: 18)
+
+    override func setFrameSize(_ newSize: NSSize) {
+        let changed = newSize.width != frame.width
+        super.setFrameSize(newSize)
+        if changed { updateReadableInset() }
+    }
 
     private func fileURLs(from pb: NSPasteboard) -> [URL] {
         (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
@@ -123,8 +133,8 @@ final class MarkdownTextView: NSTextView {
 struct MarkdownEditor: NSViewRepresentable {
     var text: String
     var noteId: String
-    var fontSize: Double
-    var monospaced: Bool
+    var typography: Typography
+    var readableWidth: Bool
     var isEditable: Bool
     var bridge: EditorBridge
     var onChange: (String) -> Void
@@ -154,7 +164,6 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.isContinuousSpellCheckingEnabled = true
         tv.smartInsertDeleteEnabled = false
         tv.drawsBackground = false
-        tv.textContainerInset = NSSize(width: 18, height: 14)
         tv.minSize = NSSize(width: 0, height: 0)
         tv.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         tv.isVerticallyResizable = true
@@ -162,6 +171,7 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.autoresizingMask = [.width]
         tv.textContainer?.widthTracksTextView = true
         tv.textContainer?.lineFragmentPadding = 2
+        tv.updateReadableInset()
         tv.delegate = context.coordinator
         tv.textStorage?.delegate = context.coordinator
         tv.onDropFiles = { context.coordinator.parent.onDropFiles($0) }
@@ -176,7 +186,7 @@ struct MarkdownEditor: NSViewRepresentable {
 
     private func load(into tv: NSTextView, context: Context) {
         let c = context.coordinator
-        c.highlighter.configure(fontSize: fontSize, monospaced: monospaced)
+        c.highlighter.configure(typography)
         tv.typingAttributes = c.highlighter.baseAttributes
         c.isLoading = true
         tv.string = text
@@ -185,21 +195,21 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.setSelectedRange(NSRange(location: 0, length: 0))
         tv.scrollToBeginningOfDocument(nil)
         c.noteId = noteId
-        c.fontKey = "\(fontSize)-\(monospaced)"
+        c.typography = typography
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let c = context.coordinator
         c.parent = self
-        guard let tv = c.textView else { return }
+        guard let tv = c.textView as? MarkdownTextView else { return }
         bridge.textView = tv
         tv.isEditable = isEditable
-        let fontKey = "\(fontSize)-\(monospaced)"
+        tv.maxLineWidth = readableWidth ? typography.readableWidth : nil
         if c.noteId != noteId {
             load(into: tv, context: context)
-        } else if c.fontKey != fontKey {
-            c.fontKey = fontKey
-            c.highlighter.configure(fontSize: fontSize, monospaced: monospaced)
+        } else if c.typography != typography {
+            c.typography = typography
+            c.highlighter.configure(typography)
             tv.typingAttributes = c.highlighter.baseAttributes
             if let storage = tv.textStorage { c.highlighter.highlight(storage) }
         } else if tv.string != text {
@@ -220,7 +230,7 @@ struct MarkdownEditor: NSViewRepresentable {
         var parent: MarkdownEditor
         weak var textView: NSTextView?
         var noteId = ""
-        var fontKey = ""
+        var typography = Typography()
         var isLoading = false
         let highlighter = MarkdownHighlighter()
 
@@ -241,9 +251,11 @@ struct MarkdownEditor: NSViewRepresentable {
     }
 }
 
-/// Lightweight regex-based Markdown syntax highlighting for the source editor.
+/// Lightweight regex-based Markdown syntax highlighting for the source editor. Markup characters are dimmed so
+/// the text reads like the rendered note, and fenced code is coloured like in the preview.
 final class MarkdownHighlighter {
     private(set) var baseAttributes: [NSAttributedString.Key: Any] = [:]
+    private var typography = Typography()
     private var baseFont = NSFont.systemFont(ofSize: 14)
     private var boldFont = NSFont.boldSystemFont(ofSize: 14)
     private var italicFont = NSFont.systemFont(ofSize: 14)
@@ -256,30 +268,40 @@ final class MarkdownHighlighter {
     private let bold = re("(\\*\\*|__)(?=\\S)[^\\n]*?\\S\\1")
     private let italic = re("(?<![*\\w])\\*(?=[^\\s*])[^*\\n]*?[^\\s*]\\*(?!\\*)|(?<![_\\w])_(?=[^\\s_])[^_\\n]*?[^\\s_]_(?![_\\w])")
     private let strike = re("~~[^~\\n]+~~")
+    private let mark = re("==(?=\\S)[^=\\n]+?(?<=\\S)==")
     private let inlineCode = re("`[^`\\n]+`")
-    private let link = re("!?\\[[^\\]\\n]*\\]\\([^)\\n]*\\)|<https?://[^>\\s]+>|(?<![(<\\w])https?://[^\\s)>]+")
+    private let link = re("(!?\\[)([^\\]\\n]*)(\\]\\([^)\\n]*\\))|<https?://[^>\\s]+>|(?<![(<\\w])https?://[^\\s)>]+")
     private let listMarker = re("^[ \\t]*([-*+]|\\d+[.)])[ \\t]")
     private let checkbox = re("^[ \\t]*[-*+][ \\t]\\[[ xX]\\]")
+    private let checkedItem = re("^[ \\t]*[-*+][ \\t]\\[[xX]\\][ \\t](.*)$")
     private let quote = re("^[ \\t]*>.*$")
     private let rule = re("^[ \\t]*([-*_])([ \\t]*\\1){2,}[ \\t]*$")
-    private let fence = re("^[ \\t]*(```|~~~)[^\\n]*\\n[\\s\\S]*?(^[ \\t]*\\1[ \\t]*$|\\z)")
+    private let fence = re("^[ \\t]*(```|~~~)([^\\n]*)\\n([\\s\\S]*?)(^[ \\t]*\\1[ \\t]*$|\\z)")
+    private let math = re("\\$\\$[\\s\\S]+?\\$\\$|(?<![\\\\$\\w])\\$(?=[^\\s$])[^$\\n]*?[^\\s\\\\$]\\$(?![\\w$])")
     private let html = re("</?[a-zA-Z][^>\\n]*>")
 
-    func configure(fontSize: Double, monospaced: Bool) {
-        let size = CGFloat(fontSize)
-        baseFont = monospaced ? .monospacedSystemFont(ofSize: size, weight: .regular) : .systemFont(ofSize: size)
-        boldFont = monospaced ? .monospacedSystemFont(ofSize: size, weight: .bold) : .boldSystemFont(ofSize: size)
-        italicFont = NSFontManager.shared.convert(baseFont, toHaveTrait: .italicFontMask)
-        codeFont = .monospacedSystemFont(ofSize: size * 0.93, weight: .regular)
+    func configure(_ typography: Typography) {
+        self.typography = typography
+        let family = typography.family
+        let size = typography.size
+        baseFont = family.font(size: size)
+        boldFont = family.font(size: size, weight: .bold)
+        italicFont = family.font(size: size, italic: true)
+        codeFont = typography.code()
         let scales: [CGFloat] = [1.5, 1.3, 1.15, 1.05, 1.0, 1.0]
-        headingFonts = scales.map { monospaced ? .monospacedSystemFont(ofSize: size * $0, weight: .bold) : .systemFont(ofSize: size * $0, weight: .bold) }
+        headingFonts = scales.map { family.font(size: size * $0, weight: .bold) }
         let paragraph = NSMutableParagraphStyle()
-        paragraph.lineHeightMultiple = 1.2
+        paragraph.lineHeightMultiple = 1.25
         baseAttributes = [.font: baseFont, .foregroundColor: NSColor.textColor, .paragraphStyle: paragraph]
     }
 
+    /// Kept for callers that only pick a size and monospacing.
+    func configure(fontSize: Double, monospaced: Bool) {
+        configure(Typography(family: monospaced ? .monospaced : .system, size: CGFloat(fontSize)))
+    }
+
     init() {
-        configure(fontSize: 14, monospaced: false)
+        configure(Typography())
     }
 
     /// Re-highlights the whole document; small documents are cheap enough, large ones only refresh the edited paragraphs.
@@ -291,35 +313,71 @@ final class MarkdownHighlighter {
         }
         guard range.length > 0 else { return }
         let text = storage.string
+        let syntax = NSColor.tertiaryLabelColor
 
         storage.setAttributes(baseAttributes, range: range)
 
         func each(_ re: NSRegularExpression, _ body: (NSTextCheckingResult) -> Void) {
             re.enumerateMatches(in: text, range: range) { m, _, _ in if let m { body(m) } }
         }
+        func dim(_ r: NSRange, length: Int) {
+            guard r.length >= 2 * length else { return }
+            storage.addAttribute(.foregroundColor, value: syntax, range: NSRange(location: r.location, length: length))
+            storage.addAttribute(.foregroundColor, value: syntax, range: NSRange(location: NSMaxRange(r) - length, length: length))
+        }
 
         each(heading) { m in
             let level = m.range(at: 1).length
             storage.addAttribute(.font, value: self.headingFonts[level - 1], range: m.range)
-            storage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: m.range(at: 1))
+            storage.addAttribute(.foregroundColor, value: syntax, range: m.range(at: 1))
         }
-        each(bold) { storage.addAttribute(.font, value: self.boldFont, range: $0.range) }
-        each(italic) { storage.addAttribute(.font, value: self.italicFont, range: $0.range) }
+        each(bold) { m in
+            storage.addAttribute(.font, value: self.boldFont, range: m.range)
+            dim(m.range, length: 2)
+        }
+        each(italic) { m in
+            storage.addAttribute(.font, value: self.italicFont, range: m.range)
+            dim(m.range, length: 1)
+        }
         each(strike) { m in
             storage.addAttributes([.strikethroughStyle: NSUnderlineStyle.single.rawValue, .foregroundColor: NSColor.secondaryLabelColor], range: m.range)
+            dim(m.range, length: 2)
+        }
+        each(mark) { m in
+            storage.addAttribute(.backgroundColor, value: NSColor.systemYellow.withAlphaComponent(0.3), range: m.range)
+            dim(m.range, length: 2)
         }
         each(html) { storage.addAttribute(.foregroundColor, value: NSColor.systemTeal, range: $0.range) }
-        each(link) { storage.addAttribute(.foregroundColor, value: NSColor.linkColor, range: $0.range) }
+        each(link) { m in
+            if m.range(at: 1).location != NSNotFound {
+                storage.addAttribute(.foregroundColor, value: syntax, range: m.range(at: 1))
+                storage.addAttribute(.foregroundColor, value: NSColor.linkColor, range: m.range(at: 2))
+                storage.addAttribute(.foregroundColor, value: syntax, range: m.range(at: 3))
+            } else {
+                storage.addAttribute(.foregroundColor, value: NSColor.linkColor, range: m.range)
+            }
+        }
         each(listMarker) { storage.addAttribute(.foregroundColor, value: NSColor.controlAccentColor, range: $0.range(at: 1)) }
         each(checkbox) { storage.addAttribute(.foregroundColor, value: NSColor.controlAccentColor, range: $0.range) }
+        each(checkedItem) { storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: $0.range(at: 1)) }
         each(quote) { storage.addAttribute(.foregroundColor, value: NSColor.secondaryLabelColor, range: $0.range) }
-        each(rule) { storage.addAttribute(.foregroundColor, value: NSColor.tertiaryLabelColor, range: $0.range) }
+        each(rule) { storage.addAttribute(.foregroundColor, value: syntax, range: $0.range) }
+        each(math) { m in
+            storage.addAttributes([.font: self.codeFont, .foregroundColor: NSColor.systemIndigo], range: m.range)
+        }
         each(inlineCode) { m in
             storage.addAttributes([.font: self.codeFont, .foregroundColor: NSColor.systemPink], range: m.range)
+            dim(m.range, length: 1)
         }
         each(fence) { m in
-            storage.addAttributes([.font: self.codeFont, .foregroundColor: NSColor.secondaryLabelColor,
-                                   .backgroundColor: NSColor.quaternaryLabelColor.withAlphaComponent(0.12)], range: m.range)
+            storage.addAttributes([.font: self.codeFont, .foregroundColor: NSColor.labelColor], range: m.range)
+            storage.removeAttribute(.backgroundColor, range: m.range)
+            storage.removeAttribute(.strikethroughStyle, range: m.range)
+            let info = (text as NSString).substring(with: m.range(at: 2)).trimmingCharacters(in: .whitespaces)
+            let open = NSRange(location: m.range.location, length: m.range(at: 2).location + m.range(at: 2).length - m.range.location)
+            storage.addAttribute(.foregroundColor, value: syntax, range: open)
+            if m.range(at: 4).length > 0 { storage.addAttribute(.foregroundColor, value: syntax, range: m.range(at: 4)) }
+            CodeHighlighter.apply(language: info, to: storage, range: m.range(at: 3))
         }
     }
 }

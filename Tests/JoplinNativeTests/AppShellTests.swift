@@ -47,7 +47,8 @@ import Testing
         Snapshot.scheduleIfRequested(model: model, env: [:]) { quitCalled = true }
         Snapshot.scheduleIfRequested(model: model, env: [
             "JN_SNAPSHOT": png.path, "JN_SNAPSHOT_DELAY": "0.4", "JN_SNAPSHOT_QUIT": "1",
-            "JN_SELECT_INDEX": "1", "JN_IMPORT_DESKTOP": profile.path,
+            "JN_SELECT_INDEX": "1", "JN_IMPORT_DESKTOP": profile.path, "JN_LAYOUT": "split", "JN_APPEARANCE": "light",
+            "JN_SCROLL": "1",
         ]) { quitCalled = true }
         for _ in 0..<40 where !quitCalled {
             try await Task.sleep(for: .milliseconds(50))
@@ -56,6 +57,8 @@ import Testing
         #expect(model.alert?.title == "Joplin Desktop profile imported")
         #expect(model.allNotesCount == 3)
         #expect(NSImage(contentsOf: png) != nil)
+        #expect(model.layout == .split)
+        NSApp.appearance = nil
     }
 
     @Test func menuCommandsBuild() throws {

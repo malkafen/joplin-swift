@@ -124,7 +124,7 @@ import Testing
         #expect(tv.string == model.currentNote?.body)
 
         model.editorFontSize = 20
-        model.editorMonospaced = true
+        model.editorFont = .monospaced
         pump()
         #expect((tv.typingAttributes[.font] as? NSFont)?.isFixedPitch == true)
 
@@ -141,7 +141,7 @@ import Testing
         #expect(host.fittingSize.height > 0)
     }
 
-    @Test func syncStatesAndThemes() async throws {
+    @Test func syncStatesAndTextSettings() async throws {
         let h = try ModelHarness()
         let model = h.model
         _ = render(SyncStatusBar().environment(model), size: CGSize(width: 220, height: 40))
@@ -155,10 +155,16 @@ import Testing
         model.syncPassword = "secret"
         await model.syncNow()
         _ = render(SettingsView().environment(model), size: CGSize(width: 480, height: 640))
-        model.theme = .system
+        model.showSidebarTags = false
+        model.showNoteTags = false
+        model.readableWidth = false
+        model.previewFont = .serif
+        model.layout = .split
         let host = render(ContentView().environment(model))
         #expect(host.fittingSize.width > 0)
-        model.theme = .black
+        _ = render(TextSettings().environment(model), size: CGSize(width: 520, height: 600))
+        _ = render(GeneralSettings().environment(model), size: CGSize(width: 520, height: 600))
+        _ = render(SyncSettings().environment(model), size: CGSize(width: 520, height: 600))
     }
 
     @Test func snapshotImages() throws {
@@ -178,6 +184,8 @@ import Testing
         #expect(coordinator.textView(tv, clickedOnLink: URL(string: "https://a.b")!, at: 0))
         #expect(coordinator.textView(tv, clickedOnLink: "joplinitem://x", at: 0))
         #expect(!coordinator.textView(tv, clickedOnLink: 42, at: 0))
+        // Anchors scroll the preview instead of opening anything.
+        #expect(coordinator.textView(tv, clickedOnLink: URL(string: "#intro")!, at: 0))
         #expect(clicked.map(\.absoluteString) == ["https://a.b", "joplinitem://x"])
     }
 

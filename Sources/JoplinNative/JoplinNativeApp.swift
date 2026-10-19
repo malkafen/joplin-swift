@@ -29,7 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var model: AppModel = .shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        model.theme.apply()
         Snapshot.scheduleIfRequested(model: model)
     }
 
@@ -87,6 +86,20 @@ struct AppCommands: Commands {
             Button("Toggle Editor Layout") { model.cycleLayout() }
                 .keyboardShortcut("l", modifiers: .control)
             Divider()
+            Toggle("Show Tags in Sidebar", isOn: Binding(get: { model.showSidebarTags }, set: { model.showSidebarTags = $0 }))
+                .keyboardShortcut("t", modifiers: [.command, .control])
+            Toggle("Show Tags Above Notes", isOn: Binding(get: { model.showNoteTags }, set: { model.showNoteTags = $0 }))
+            Divider()
+        }
+
+        CommandGroup(after: .toolbar) {
+            Button("Actual Size") { model.resetTextSize() }
+                .keyboardShortcut("0")
+            Button("Zoom In") { model.adjustTextSize(by: 1) }
+                .keyboardShortcut("+")
+            Button("Zoom Out") { model.adjustTextSize(by: -1) }
+                .keyboardShortcut("-")
+            Divider()
         }
 
         CommandMenu("Note") {
@@ -111,6 +124,8 @@ struct AppCommands: Commands {
                 .keyboardShortcut("i")
             Button("Strikethrough") { model.editor.wrap("~~", placeholder: "text") }
                 .keyboardShortcut("x", modifiers: [.command, .shift])
+            Button("Highlight") { model.editor.wrap("==", placeholder: "text") }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
             Button("Inline Code") { model.editor.wrap("`", placeholder: "code") }
                 .keyboardShortcut("e")
             Button("Link") { model.editor.wrap("[", "](https://)", placeholder: "link text") }
@@ -133,6 +148,9 @@ struct AppCommands: Commands {
                 .keyboardShortcut("'", modifiers: [.command, .shift])
             Divider()
             Button("Code Block") { model.editor.wrap("```\n", "\n```", placeholder: "code") }
+            Button("Math Formula") { model.editor.wrap("$", placeholder: "E = mc^2") }
+                .keyboardShortcut("m", modifiers: [.command, .control])
+            Button("Table") { model.editor.insertBlock("| Column | Column |\n|--------|--------|\n|        |        |\n") }
             Button("Horizontal Rule") { model.editor.insertBlock("\n---\n") }
             Button("Insert Date and Time") {
                 model.editor.insert(Date().formatted(date: .numeric, time: .shortened))
@@ -157,10 +175,23 @@ enum Snapshot {
                 }
             }
         }
+        if let layout = env["JN_LAYOUT"].flatMap(EditorLayout.init(rawValue:)) { model.layout = layout }
+        if let appearance = env["JN_APPEARANCE"] {
+            NSApp.appearance = NSAppearance(named: appearance == "dark" ? .darkAqua : .aqua)
+        }
         if let index = Int(env["JN_SELECT_INDEX"] ?? "") {
             DispatchQueue.main.asyncAfter(deadline: .now() + min(1, delay / 2)) {
                 MainActor.assumeIsolated {
                     if model.notes.indices.contains(index) { model.selectedNoteIDs = [model.notes[index].id] }
+                }
+            }
+        }
+        if let fraction = Double(env["JN_SCROLL"] ?? "") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay * 0.75) {
+                MainActor.assumeIsolated {
+                    if let content = NSApp.windows.first(where: { $0.isVisible && $0.contentView != nil })?.contentView {
+                        scrollAll(in: content, to: fraction)
+                    }
                 }
             }
         }
@@ -171,6 +202,16 @@ enum Snapshot {
             }
             if env["JN_SNAPSHOT_QUIT"] == "1" { quit() }
         }
+    }
+
+    /// Scrolls every text scroll view to `fraction` of its height (0 top, 1 bottom).
+    static func scrollAll(in view: NSView, to fraction: Double) {
+        if let scroll = view as? NSScrollView, let doc = scroll.documentView, doc is NSTextView {
+            let maxY = max(0, doc.frame.height - scroll.contentView.bounds.height)
+            scroll.contentView.scroll(to: NSPoint(x: 0, y: maxY * fraction))
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
+        view.subviews.forEach { scrollAll(in: $0, to: fraction) }
     }
 
     /// The composited window (materials, toolbar), as the user sees it. Capturing the app's own windows needs no

@@ -40,18 +40,28 @@ import Testing
             d.set("preview", forKey: "layout")
             d.set(18.0, forKey: "editorFontSize")
             d.set(true, forKey: "editorMonospaced")
+            d.set(false, forKey: "showSidebarTags")
         }
         let model = h.model
         #expect(model.sort == .title)
         #expect(!model.uncompletedTodosOnTop)
         #expect(model.layout == .preview)
         #expect(model.editorFontSize == 18)
-        #expect(model.editorMonospaced)
+        #expect(model.editorFont == .monospaced)
+        #expect(!model.showSidebarTags)
 
         model.sort = .created
         model.uncompletedTodosOnTop = true
         model.editorFontSize = 12
-        model.editorMonospaced = false
+        model.editorFont = .serif
+        model.previewFont = FontFamily(name: "Helvetica")
+        model.previewFontSize = 17
+        model.codeFont = FontFamily(name: "Menlo")
+        model.readableWidth = false
+        model.loadRemoteImages = false
+        model.showSidebarTags = true
+        model.sidebarTagsExpanded = false
+        model.showNoteTags = false
         model.cycleLayout()
         #expect(model.layout == .editor)
         model.cycleLayout()
@@ -60,7 +70,25 @@ import Testing
         #expect(h.defaults.bool(forKey: "todosOnTop"))
         #expect(h.defaults.string(forKey: "layout") == "split")
         #expect(h.defaults.double(forKey: "editorFontSize") == 12)
-        #expect(!h.defaults.bool(forKey: "editorMonospaced"))
+
+        let againHarness = try ModelHarness(welcome: false) { d in
+            for key in ["editorFont", "previewFont", "previewFontSize", "codeFont", "readableWidth", "loadRemoteImages",
+                        "showSidebarTags", "sidebarTagsExpanded", "showNoteTags", "editorMonospaced"] {
+                d.set(h.defaults.object(forKey: key), forKey: key)
+            }
+        }
+        let again = againHarness.model
+        #expect(again.editorFont == .serif)
+        #expect(again.previewFont.name == "Helvetica")
+        #expect(again.previewFontSize == 17)
+        #expect(again.codeFont.name == "Menlo")
+        #expect(!again.readableWidth)
+        #expect(!again.loadRemoteImages)
+        #expect(again.showSidebarTags)
+        #expect(!again.sidebarTagsExpanded)
+        #expect(!again.showNoteTags)
+        #expect(!again.renderer.loadsRemoteImages)
+        #expect(again.previewTypography == Typography(family: FontFamily(name: "Helvetica"), size: 17, codeFamily: FontFamily(name: "Menlo")))
     }
 
     @Test func defaultPreferences() throws {
@@ -69,7 +97,26 @@ import Testing
         #expect(model.uncompletedTodosOnTop)
         #expect(model.layout == .editor)
         #expect(model.editorFontSize == 14)
-        #expect(!model.editorMonospaced)
+        #expect(model.editorFont == .system)
+        #expect(model.previewFontSize == 15)
+        #expect(model.codeFont == .monospaced)
+        #expect(model.readableWidth)
+        #expect(model.loadRemoteImages)
+        #expect(model.renderer.loadsRemoteImages)
+        #expect(model.showSidebarTags)
+        #expect(model.showNoteTags)
+    }
+
+    @Test func textSizeShortcuts() throws {
+        let model = try ModelHarness(welcome: false).model
+        model.adjustTextSize(by: 2)
+        #expect(model.editorFontSize == 16)
+        #expect(model.previewFontSize == 17)
+        for _ in 0..<40 { model.adjustTextSize(by: -1) }
+        #expect(model.editorFontSize == AppModel.fontSizes.lowerBound)
+        model.resetTextSize()
+        #expect(model.editorFontSize == 14)
+        #expect(model.previewFontSize == 15)
     }
 
     @Test func folderTree() {
@@ -490,10 +537,10 @@ import Testing
         let h = try ModelHarness(welcome: false)
         let res = try h.store.addResource(data: Data("x".utf8), filename: "file.txt", mime: "text/plain", fileExtension: "txt")
         let model = h.model
-        model.editorFontSize = 20
+        model.previewFontSize = 20
         let renderer = model.renderer
         #expect(renderer.baseSize == 20)
-        #expect(renderer.render("[](:/\(res.id))").string == "📎 file.txt")
+        #expect(renderer.render("[](:/\(res.id))").string == "\u{FFFC}\u{2009}file.txt")
         #expect(renderer.resolveResource(fixtureId(404)) == nil)
     }
 
