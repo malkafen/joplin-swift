@@ -64,9 +64,10 @@ Joplin Server account, after a minute of idling:
   `d c y > < ~` with motions, doubled for lines and in visual mode, `x X D C Y s S r J p P o O i a I A u ⌃R`.
   Search with `/ ? n N * #` lights every match as you type (smartcase: lower-case ignores case) and keeps them lit
   until <kbd>Esc</kbd> or `:noh`; `:42` goes to a line. The mode and the command line are shown in the editor's
-  bottom corners.
+  bottom corners. Commands work the same with a non-Latin keyboard layout (e.g. Russian).
 - **Custom shortcuts**: Settings → Shortcuts changes (or removes) the shortcuts of the editor layouts and warns
-  about clashes with other commands.
+  about clashes with other commands. Shortcuts are recorded by physical key, so they work in any keyboard layout;
+  F1–F12 can be used too.
 - **Fonts**: choose the font and size of the editor, the preview and code (any installed family or the system
   designs: SF Pro, New York, SF Rounded, SF Mono). <kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> /
   <kbd>⌘</kbd><kbd>0</kbd> scale the text. Lines are kept at a readable length in wide windows (optional).

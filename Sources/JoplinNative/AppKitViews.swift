@@ -205,14 +205,19 @@ struct MarkdownPreview: NSViewRepresentable {
         c.renderer = renderer
         guard let tv = c.textView else { return }
         tv.maxLineWidth = readableWidth ? renderer.typography.readableWidth : nil
-        let key = "\(renderer.typography)|\(renderer.loadsRemoteImages)|\(highlights)|\(markdown)"
-        guard c.renderedKey != key || c.noteId != noteId else { return }
+        let style = "\(renderer.typography)|\(renderer.loadsRemoteImages)|\(highlights)"
+        guard c.renderedStyle != style || c.markdown != markdown || c.noteId != noteId else { return }
         let sameNote = c.noteId == noteId
         let newTerms = c.highlights != highlights
+        let typing = sameNote && c.renderedStyle == style
         c.markdown = markdown
         c.highlights = highlights
-        c.renderedKey = key
+        c.renderedStyle = style
         c.noteId = noteId
+        if typing {
+            c.renderSoon()
+            return
+        }
         c.render(keepScroll: sameNote)
         if !sameNote { tv.scrollToBeginningOfDocument(nil) }
         if !sameNote || newTerms { c.revealFirstMatch() }
@@ -230,9 +235,14 @@ struct MarkdownPreview: NSViewRepresentable {
         var markdown = ""
         var highlights: [String] = []
         private var firstMatch: NSRange?
-        var renderedKey = ""
+        var renderedStyle = ""
         var noteId = ""
         private var renderedWidth: CGFloat = 0
+        private var lastRender = Date.distantPast
+        private var pendingRender: DispatchWorkItem?
+        /// While typing in the split layout the preview follows at most this often; a large note takes tens of
+        /// milliseconds to render.
+        static let typingInterval: TimeInterval = 0.25
 
         init(onLink: @escaping (URL) -> Void) {
             self.onLink = onLink
@@ -259,7 +269,23 @@ struct MarkdownPreview: NSViewRepresentable {
             DispatchQueue.main.async { [weak self] in self?.render(keepScroll: true) }
         }
 
+        /// Renders now when the preview has been idle, otherwise once the typing interval has passed.
+        func renderSoon() {
+            pendingRender?.cancel()
+            let wait = Self.typingInterval - Date().timeIntervalSince(lastRender)
+            guard wait > 0 else {
+                render(keepScroll: true)
+                return
+            }
+            let item = DispatchWorkItem { [weak self] in self?.render(keepScroll: true) }
+            pendingRender = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
+        }
+
         func render(keepScroll: Bool) {
+            pendingRender?.cancel()
+            pendingRender = nil
+            defer { lastRender = Date() }
             guard let tv = textView, let renderer, let scroll = tv.enclosingScrollView else { return }
             let origin = scroll.contentView.bounds.origin
             renderedWidth = imageWidth

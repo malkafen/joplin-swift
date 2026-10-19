@@ -391,8 +391,12 @@ final class AppModel {
         stickyNotebooks = defaults.object(forKey: "stickyNotebooks") as? Bool ?? true
         expandedFolders = Set(defaults.stringArray(forKey: "expandedFolders") ?? [])
         for action in ShortcutAction.allCases {
-            if let stored = defaults.string(forKey: action.defaultsKey) {
-                shortcuts[action] = .some(Hotkey(storage: stored))
+            guard let stored = defaults.string(forKey: action.defaultsKey) else { continue }
+            let hotkey = Hotkey(storage: stored)
+            if let latin = hotkey?.latinized() {
+                setHotkey(latin, for: action)
+            } else {
+                shortcuts[action] = .some(hotkey)
             }
         }
         syncURL = store.setting("sync.url") ?? ""
@@ -439,7 +443,7 @@ final class AppModel {
         tags = store.tags()
         folderCounts = store.noteCountsByFolder()
         allNotesCount = store.totalNoteCount
-        trashCount = store.notes(filter: .trash, sort: .updated).count
+        trashCount = store.trashedNoteCount
     }
 
     static func buildTree(_ folders: [Folder]) -> [FolderNode] {
@@ -918,8 +922,8 @@ final class AppModel {
     }
 
     /// Puts the cursor in the toolbar search field.
-    func focusSearch(in window: NSWindow? = NSApp.keyWindow ?? NSApp.mainWindow) {
-        guard let window else { return }
+    func focusSearch(in window: NSWindow? = nil) {
+        guard let window = window ?? NSApp.keyWindow ?? NSApp.mainWindow else { return }
         if let item = window.toolbar?.items.compactMap({ $0 as? NSSearchToolbarItem }).first {
             item.beginSearchInteraction()
             return

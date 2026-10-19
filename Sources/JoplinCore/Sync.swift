@@ -175,6 +175,14 @@ public final class SyncEngine {
                 cursor = ""
                 continue
             }
+            var wanted: [String] = []
+            for item in page.items where Self.isItemName(item.name) && item.change != .delete {
+                let id = String(item.name.prefix(32))
+                if !pendingDeletes.contains(id), !hasVersion(id: id, itemUpdatedTime: item.itemUpdatedTime), !wanted.contains(item.name) {
+                    wanted.append(item.name)
+                }
+            }
+            let contents = try await fetch(wanted)
             for item in page.items where Self.isItemName(item.name) {
                 let id = String(item.name.prefix(32))
                 if pendingDeletes.contains(id) { continue }
@@ -184,7 +192,8 @@ public final class SyncEngine {
                     try store.applyRemoteDeletion(id: id)
                     report.deletedLocally += 1
                 } else {
-                    try await download(id: id, name: item.name, itemUpdatedTime: item.itemUpdatedTime, &report)
+                    try await download(id: id, name: item.name, itemUpdatedTime: item.itemUpdatedTime,
+                                       prefetched: contents[item.name], &report)
                 }
             }
             cursor = page.cursor
@@ -193,8 +202,38 @@ public final class SyncEngine {
         }
     }
 
-    private func download(id: String, name: String, itemUpdatedTime: Int64, _ report: inout SyncReport) async throws {
-        // Versions this client already has, including its own uploads coming back through the delta.
+    /// Downloads at a time while pulling. Each request mostly waits for the network, so a first sync of thousands of
+    /// items is bound by the round trips, not by this client.
+    static let parallelDownloads = 8
+
+    /// Contents of the named files (nil for files that are gone), fetched concurrently.
+    func fetch(_ names: [String]) async throws -> [String: Data?] {
+        let client = self.client
+        var out: [String: Data?] = [:]
+        try await withThrowingTaskGroup(of: (String, Data?).self) { group in
+            var next = 0
+            func start() {
+                let name = names[next]
+                next += 1
+                group.addTask { (name, try await client.get(name)) }
+            }
+            while next < min(names.count, Self.parallelDownloads) { start() }
+            while let (name, data) = try await group.next() {
+                out[name] = .some(data)
+                if next < names.count { start() }
+            }
+        }
+        return out
+    }
+
+    /// Whether this client already has the version, including its own uploads coming back through the delta.
+    private func hasVersion(id: String, itemUpdatedTime: Int64) -> Bool {
+        guard itemUpdatedTime > 0, let type = store.localType(of: id) else { return false }
+        return store.syncTime(id: id) == itemUpdatedTime || store.row(type, id: id)?.int("updated_time") == itemUpdatedTime
+    }
+
+    private func download(id: String, name: String, itemUpdatedTime: Int64, prefetched: Data?? = nil,
+                          _ report: inout SyncReport) async throws {
         if itemUpdatedTime > 0, let type = store.localType(of: id) {
             if store.syncTime(id: id) == itemUpdatedTime { return }
             if store.row(type, id: id)?.int("updated_time") == itemUpdatedTime {
@@ -202,7 +241,9 @@ public final class SyncEngine {
                 return
             }
         }
-        guard let data = try await client.get(name), let text = String(data: data, encoding: .utf8) else { return }
+        let content: Data?
+        if let prefetched { content = prefetched } else { content = try await client.get(name) }
+        guard let data = content, let text = String(data: data, encoding: .utf8) else { return }
         let type: ModelType
         var fields: [String: Any]
         do {

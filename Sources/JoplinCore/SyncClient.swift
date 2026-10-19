@@ -59,12 +59,18 @@ public struct DeltaPage: Sendable {
 }
 
 /// REST client for Joplin Server (`packages/server`), the API used by Joplin's "Joplin Server" sync target.
-public final class JoplinServerClient {
+/// Requests may run concurrently; only the session id is shared between them.
+public final class JoplinServerClient: @unchecked Sendable {
     public let baseURL: URL
     let email: String
     let password: String
     let transport: HTTPTransport
-    private(set) var sessionId: String?
+    private let sessionLock = NSLock()
+    private var currentSession: String?
+    private(set) var sessionId: String? {
+        get { sessionLock.withLock { currentSession } }
+        set { sessionLock.withLock { currentSession = newValue } }
+    }
 
     public init(baseURL: String, email: String, password: String, transport: HTTPTransport = URLSessionTransport()) throws {
         var trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
