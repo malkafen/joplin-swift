@@ -40,7 +40,9 @@ Joplin Server account, after a minute of idling:
 ## Features
 
 - **Notebooks**: nested notebooks with emoji icons, drag & drop, trash with restore (notebooks in the trash fold
-  under it)
+  under it). Expanded notebooks are remembered; View → Expand / Collapse All Notebooks.
+- **Sticky scroll** in the notebook tree: while the sidebar scrolls, the parent notebooks of the rows at the top
+  stay pinned (click one to jump to it), so deep hierarchies keep their context. Settings → General.
 - **Notes and to-dos**: checkboxes in the list, completed to-dos sorted to the bottom, duplicate, move, copy link
 - **Markdown editor**: `NSTextView` with syntax highlighting (markup characters dimmed, fenced code coloured),
   native undo, spell checking and the find bar
@@ -56,6 +58,12 @@ Joplin Server account, after a minute of idling:
   - images from attachments and from the web (optional), scaled to the text width with rounded corners
   - diagrams drawn natively, no JavaScript: Mermaid flowcharts, state and sequence diagrams and pie charts, and
     draw.io diagrams (SVG from the Joplin draw.io plugin, `.drawio` files, ```` ```drawio ```` blocks)
+- **Vim mode** (View → Vim Mode, <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>V</kbd>): normal, insert, visual and
+  visual-line modes with counts; motions `h j k l w b e W B E 0 ^ $ gg G f F t T ; , { } ⌃D ⌃U`, operators
+  `d c y > < ~` with motions, doubled for lines and in visual mode, `x X D C Y s S r J p P o O i a I A u ⌃R`, and
+  `/ n N` through the find bar. The mode is shown in the corner of the editor.
+- **Custom shortcuts**: Settings → Shortcuts changes (or removes) the shortcuts of the editor layouts and warns
+  about clashes with other commands.
 - **Fonts**: choose the font and size of the editor, the preview and code (any installed family or the system
   designs: SF Pro, New York, SF Rounded, SF Mono). <kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> /
   <kbd>⌘</kbd><kbd>0</kbd> scale the text. Lines are kept at a readable length in wide windows (optional).
@@ -182,6 +190,9 @@ Environment variables for scripted checks, for example over SSH (no screen-recor
 | `JN_SELECT_INDEX=N` | Select the N-th note in the list |
 | `JN_IMPORT_DESKTOP=1` | Import the Joplin Desktop profile on launch (or pass a profile path) |
 | `JN_SEARCH=word` | Start with this search |
+| `JN_VIM=1` | Turn on Vim mode |
+| `JN_EXPAND_ALL=1` | Expand all notebooks |
+| `JN_SIDEBAR_SCROLL=N` | Scroll the sidebar N points down before the snapshot |
 | `JN_LAYOUT=split` | Start in the `editor`, `split` or `preview` layout |
 | `JN_APPEARANCE=dark` | Force the `dark` or `light` appearance |
 | `JN_SCROLL=1` | Scroll editor and preview to a fraction of their height (0 top, 1 bottom) before the snapshot |

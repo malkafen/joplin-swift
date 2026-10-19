@@ -66,16 +66,7 @@ struct SidebarView: View {
                 .help("New Notebook")
             }
 
-            OutlineGroup(model.folderTree, children: \.children) { node in
-                FolderRow(folder: node.folder)
-                    .badge(model.folderCounts[node.id] ?? 0)
-                    .tag(SidebarItem.folder(node.id))
-                    .draggable("folder:\(node.id)")
-                    .dropDestination(for: String.self) { items, _ in
-                        model.dropOnFolder(items, folderId: node.id)
-                    }
-                    .contextMenu { folderMenu(node.folder) }
-            }
+            FolderTreeRows(nodes: model.folderTree)
 
             if model.showSidebarTags, !model.tags.isEmpty {
                 Section(isExpanded: $model.sidebarTagsExpanded) {
@@ -119,6 +110,7 @@ struct SidebarView: View {
             }
         }
         .listStyle(.sidebar)
+        .overlay(alignment: .top) { StickyFolderHeader() }
         .safeAreaInset(edge: .bottom, spacing: 0) { SyncStatusBar() }
     }
 
@@ -129,6 +121,38 @@ struct SidebarView: View {
             .contextMenu {
                 Button("Empty Trash", role: .destructive) { model.emptyTrash() }
             }
+    }
+}
+
+/// Notebook rows with disclosure triangles; which notebooks are expanded is kept in the model (and remembered).
+struct FolderTreeRows: View {
+    let nodes: [FolderNode]
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        ForEach(nodes) { node in
+            if let children = node.children {
+                DisclosureGroup(isExpanded: model.expansion(of: node.id)) {
+                    AnyView(FolderTreeRows(nodes: children))
+                } label: {
+                    row(node)
+                }
+            } else {
+                row(node)
+            }
+        }
+    }
+
+    private func row(_ node: FolderNode) -> some View {
+        FolderRow(folder: node.folder)
+            .background(FolderMarker(id: node.id, tracker: model.sticky))
+            .badge(model.folderCounts[node.id] ?? 0)
+            .tag(SidebarItem.folder(node.id))
+            .draggable("folder:\(node.id)")
+            .dropDestination(for: String.self) { items, _ in
+                model.dropOnFolder(items, folderId: node.id)
+            }
+            .contextMenu { folderMenu(node.folder) }
     }
 
     @ViewBuilder
@@ -208,6 +232,8 @@ struct SyncStatusBar: View {
 
 struct FolderRow: View {
     let folder: Folder
+    /// Outside a sidebar list the icon is not tinted automatically.
+    var accentIcon = false
 
     var body: some View {
         Label {
@@ -216,7 +242,11 @@ struct FolderRow: View {
             if let emoji = folder.emoji {
                 Text(emoji)
             } else {
-                Image(systemName: "folder")
+                if accentIcon {
+                    Image(systemName: "folder").foregroundStyle(Color.accentColor)
+                } else {
+                    Image(systemName: "folder")
+                }
             }
         }
     }
@@ -534,12 +564,27 @@ struct NoteEditorView: View {
             typography: model.editorTypography,
             readableWidth: model.readableWidth,
             highlights: model.searchTerms,
+            vimMode: model.vimMode,
+            onVimMode: { model.vimState = $0 },
             isEditable: !inTrash,
             bridge: model.editor,
             onChange: { model.updateBody($0) },
             onDropFiles: { model.attachmentMarkdown(for: $0) },
             onPasteImage: { model.pastedImageMarkdown($0) }
         )
+        .overlay(alignment: .bottomTrailing) {
+            if model.vimMode {
+                Text(model.vimState.label)
+                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(model.vimState == .insert ? AnyShapeStyle(.secondary) : AnyShapeStyle(.white))
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(model.vimState == .insert ? AnyShapeStyle(.quaternary) : AnyShapeStyle(Color.accentColor),
+                                in: RoundedRectangle(cornerRadius: 5, style: .continuous))
+                    .padding(10)
+                    .allowsHitTesting(false)
+            }
+        }
     }
 
     private func previewPane(_ note: Note) -> some View {
@@ -551,15 +596,20 @@ struct NoteEditorView: View {
 // MARK: - Settings
 
 struct SettingsView: View {
+    @Environment(AppModel.self) private var model
+
     var body: some View {
         TabView {
             GeneralSettings()
                 .tabItem { Label("General", systemImage: "gearshape") }
             TextSettings()
                 .tabItem { Label("Text", systemImage: "textformat") }
+            ShortcutSettings()
+                .tabItem { Label("Shortcuts", systemImage: "command") }
             SyncSettings()
                 .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }
         }
+        .onDisappear { model.stopRecordingShortcut() }
         .frame(width: 520)
     }
 }
@@ -580,6 +630,9 @@ struct GeneralSettings: View {
                     Text("Title").tag(NoteSort.title)
                 }
                 Toggle("Uncompleted to-dos on top", isOn: $model.uncompletedTodosOnTop)
+            }
+            Section("Sidebar") {
+                Toggle("Keep parent notebooks visible while scrolling", isOn: $model.stickyNotebooks)
             }
             Section("Tags") {
                 Toggle("Show tags in the sidebar", isOn: $model.showSidebarTags)
@@ -611,6 +664,7 @@ struct TextSettings: View {
             Section("Editor") {
                 FontPicker(title: "Font", selection: $model.editorFont)
                 SizeStepper(value: $model.editorFontSize)
+                Toggle("Vim key bindings", isOn: $model.vimMode)
             }
             Section("Preview") {
                 FontPicker(title: "Font", selection: $model.previewFont)
@@ -622,6 +676,25 @@ struct TextSettings: View {
                 Toggle("Limit line length for easier reading", isOn: $model.readableWidth)
             } footer: {
                 Text("⌘+ and ⌘− change the text size of the editor and the preview together, ⌘0 restores it.")
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+struct ShortcutSettings: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        Form {
+            Section {
+                ForEach(ShortcutAction.allCases) { ShortcutRecorder(action: $0) }
+            } header: {
+                Text("Editor layout")
+            } footer: {
+                Text("Click a shortcut and press the new keys. Esc cancels, ⌫ removes the shortcut.")
                     .foregroundStyle(.secondary)
             }
         }
