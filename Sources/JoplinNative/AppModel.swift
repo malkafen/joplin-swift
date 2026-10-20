@@ -71,6 +71,9 @@ final class AppModel {
 
     let store: Store
     @ObservationIgnored let editor = EditorBridge()
+    @ObservationIgnored let searchStepper = SearchStepper()
+    /// The match of the search last stepped to in the shown note.
+    var searchPosition: SearchPosition?
     /// Pinned parent notebooks while the sidebar scrolls.
     @ObservationIgnored let sticky = StickyFolders()
 
@@ -116,6 +119,7 @@ final class AppModel {
     var searchText = "" {
         didSet {
             guard oldValue != searchText else { return }
+            searchPosition = nil
             // The words are highlighted in the note at once; the list (a full-text query over all notes, and maybe
             // another note to load) follows once typing pauses.
             pendingSearch?.cancel()
@@ -127,6 +131,12 @@ final class AppModel {
     }
     @ObservationIgnored var searchDelay: TimeInterval = 0.15
     @ObservationIgnored private var pendingSearch: DispatchWorkItem?
+
+    /// Steps to the next or previous match of the search in the note: in the editor, unless only the preview is shown.
+    func stepMatch(forward: Bool) {
+        guard currentNote != nil, let tv = layout == .preview ? searchStepper.preview : searchStepper.editor else { return }
+        searchStepper.step(forward: forward, in: tv)
+    }
 
     /// Lists the notes found by the search typed so far.
     func searchNow() {
@@ -395,6 +405,7 @@ final class AppModel {
         sort = NoteSort(rawValue: defaults.string(forKey: "sort") ?? "") ?? .updated
         uncompletedTodosOnTop = defaults.object(forKey: "todosOnTop") as? Bool ?? true
         layout = EditorLayout(rawValue: defaults.string(forKey: "layout") ?? "") ?? .editor
+        searchStepper.onStep = { [weak self] in self?.searchPosition = $0 }
         editorFontSize = defaults.object(forKey: "editorFontSize") as? Double ?? 14
         // Earlier versions only had a "monospaced editor" switch.
         editorFont = defaults.string(forKey: "editorFont").map(FontFamily.init(name:))
@@ -534,6 +545,7 @@ final class AppModel {
     }
 
     private func loadSelection() {
+        searchPosition = nil
         // The note left is saved in the background; reading it again waits for that (`loadNote`).
         saveInBackground()
         // ⌘G / ⇧⌘G in the editor then step through the matches, as after a Find.

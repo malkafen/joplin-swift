@@ -304,6 +304,8 @@ struct NoteListView: View {
         .navigationTitle(model.listTitle)
         .navigationSubtitle(model.notes.count == 1 ? "1 note" : "\(model.notes.count) notes")
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search all notes")
+        // Return / ⇧Return step through the matches in the note.
+        .onSubmit(of: .search) { model.stepMatch(forward: !NSEvent.modifierFlags.contains(.shift)) }
         .toolbar {
             ToolbarItemGroup {
                 Menu {
@@ -519,6 +521,8 @@ struct NoteEditorView: View {
             header(note, inTrash: inTrash)
             Divider()
             content(note, inTrash: inTrash)
+            Divider()
+            NoteFooter(noteId: note.id, created: note.userCreatedTime)
         }
     }
 
@@ -602,6 +606,7 @@ private struct EditorPane: View {
             onVimMode: { model.vimState = $0 },
             isEditable: !inTrash,
             bridge: model.editor,
+            stepper: model.searchStepper,
             onChange: { model.editBody($0) },
             onDropFiles: { model.attachmentMarkdown(for: $0) },
             onPasteImage: { model.pastedImageMarkdown($0) }
@@ -633,7 +638,108 @@ private struct PreviewPane: View {
         let _ = shown ? model.bodyRevision : 0
         MarkdownPreview(markdown: model.currentNote?.body ?? "", noteId: noteId, renderer: model.renderer,
                         isShown: shown, readableWidth: model.readableWidth,
-                        highlights: model.searchTerms, onLink: { model.handleLink($0) })
+                        highlights: model.searchTerms, stepper: model.searchStepper, onLink: { model.handleLink($0) })
+    }
+}
+
+/// Counts shown under the note.
+struct NoteStats: Equatable, Sendable {
+    var lines = 0
+    var words = 0
+    var characters = 0
+    var matches = 0
+
+    init() {}
+
+    /// Reads the text once, byte by byte: a huge note is counted in a few milliseconds.
+    init(_ text: String, terms: [String]) {
+        var lines = text.isEmpty ? 0 : 1, words = 0, inWord = false
+        for b in text.utf8 {
+            if b == 10 { lines += 1 }
+            // Letters and digits of any script (non-ASCII bytes) make words; spaces and punctuation separate them.
+            let wordByte = b >= 0x80 || (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
+            if wordByte, !inWord { words += 1 }
+            inWord = wordByte || (inWord && b == 39)
+        }
+        self.lines = lines
+        self.words = words
+        characters = text.count
+        matches = terms.isEmpty ? 0 : SearchHighlight.ranges(of: terms, in: text).count
+    }
+
+    /// Minutes to read at 200 words a minute.
+    var readingMinutes: Int { Int((Double(words) / 200).rounded()) }
+}
+
+/// Quiet line under the note: when it was created, its size, and the matches of the search.
+private struct NoteFooter: View {
+    @Environment(AppModel.self) private var model
+    var noteId: String
+    var created: Int64
+    @State private var stats = NoteStats()
+
+    var body: some View {
+        let terms = model.searchTerms
+        HStack(spacing: 12) {
+            Text(summary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .help(created > 0 ? "Created \(longDate(created))" : "")
+            Spacer(minLength: 8)
+            if !terms.isEmpty {
+                matches
+                    .layoutPriority(1)
+            }
+        }
+        .font(.caption)
+        .monospacedDigit()
+        .foregroundStyle(.tertiary)
+        .padding(.horizontal, 24)
+        .frame(height: 24)
+        // Counted off the main thread once typing pauses; small notes at once.
+        .task(id: "\(noteId)|\(model.bodyRevision)|\(terms)") {
+            let body = model.currentNote?.body ?? ""
+            if body.quickLength > 50_000 {
+                try? await Task.sleep(for: .milliseconds(300))
+                if Task.isCancelled { return }
+            }
+            let counted = await Task.detached(priority: .utility) { NoteStats(body, terms: terms) }.value
+            if !Task.isCancelled { stats = counted }
+        }
+    }
+
+    private var summary: String {
+        var parts: [String] = []
+        if created > 0 {
+            parts.append("Created " + Date(timeIntervalSince1970: Double(created) / 1000).formatted(date: .abbreviated, time: .omitted))
+        }
+        parts.append(count(stats.lines, "line"))
+        parts.append(count(stats.words, "word"))
+        parts.append(count(stats.characters, "character"))
+        if stats.readingMinutes > 0 { parts.append("\(stats.readingMinutes) min read") }
+        return parts.joined(separator: "  ·  ")
+    }
+
+    private func count(_ n: Int, _ noun: String) -> String {
+        "\(n.formatted()) \(noun)\(n == 1 ? "" : "s")"
+    }
+
+    private var matches: some View {
+        HStack(spacing: 2) {
+            if let position = model.searchPosition, position.count > 0 {
+                Text("\((position.index + 1).formatted()) of \(position.count.formatted())")
+            } else if model.searchPosition != nil || stats.matches == 0 {
+                Text("No matches")
+            } else {
+                Text(stats.matches == 1 ? "1 match" : "\(stats.matches.formatted()) matches")
+            }
+            Button { model.stepMatch(forward: false) } label: { Image(systemName: "chevron.up") }
+                .help("Previous match (⇧⌘G, ⇧Return in the search field)")
+            Button { model.stepMatch(forward: true) } label: { Image(systemName: "chevron.down") }
+                .help("Next match (⌘G, Return in the search field)")
+        }
+        .buttonStyle(.borderless)
+        .controlSize(.small)
     }
 }
 

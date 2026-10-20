@@ -78,18 +78,65 @@ class SearchMarkingLayoutManager: NSLayoutManager {
     var searchTerms: [String] = [] {
         didSet {
             guard oldValue != searchTerms else { return }
+            forgetMatches()
             // Only what is shown: invalidating the display of a whole note with tables takes long.
             for container in textContainers {
                 if let tv = container.textView { tv.setNeedsDisplay(tv.visibleRect) }
             }
         }
     }
+    /// The match stepped to, drawn stronger than the others.
+    private(set) var currentMatch: NSRange?
+    /// Every match in the text, found when the matches are first stepped through.
+    private var allMatches: [NSRange]?
+
+    private func forgetMatches() {
+        allMatches = nil
+        if let old = currentMatch, let storage = textStorage, NSMaxRange(old) <= storage.length {
+            invalidateDisplay(forCharacterRange: old)
+        }
+        currentMatch = nil
+    }
+
+    override func processEditing(for textStorage: NSTextStorage, edited editMask: NSTextStorageEditActions,
+                                 range newCharRange: NSRange, changeInLength delta: Int, invalidatedRange invalidatedCharRange: NSRange) {
+        super.processEditing(for: textStorage, edited: editMask, range: newCharRange, changeInLength: delta,
+                             invalidatedRange: invalidatedCharRange)
+        if editMask.contains(.editedCharacters) {
+            allMatches = nil
+            currentMatch = nil
+        }
+    }
+
+    override func replaceTextStorage(_ newTextStorage: NSTextStorage) {
+        allMatches = nil
+        currentMatch = nil
+        super.replaceTextStorage(newTextStorage)
+    }
+
+    /// Makes the next match at or after `location` (forward) or the last one before it current, wrapping around.
+    func step(forward: Bool, from location: Int) -> (match: NSRange, index: Int, count: Int)? {
+        guard !searchTerms.isEmpty, let storage = textStorage else { return nil }
+        let all = allMatches ?? SearchHighlight.ranges(of: searchTerms, in: storage.mutableString)
+        allMatches = all
+        guard !all.isEmpty else { return nil }
+        var lo = 0, hi = all.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if all[mid].location < location { lo = mid + 1 } else { hi = mid }
+        }
+        let index = forward ? (lo < all.count ? lo : 0) : (lo > 0 ? lo - 1 : all.count - 1)
+        if let old = currentMatch { invalidateDisplay(forCharacterRange: old) }
+        currentMatch = all[index]
+        invalidateDisplay(forCharacterRange: all[index])
+        return (all[index], index, all.count)
+    }
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
         super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
         guard !searchTerms.isEmpty, let storage = textStorage, let container = textContainers.first else { return }
-        SearchHighlight.color.setFill()
         for match in searchMatches(forGlyphRange: glyphsToShow) {
+            (match == currentMatch ? SearchHighlight.currentColor : SearchHighlight.color).setFill()
             for pill in pills(forCharacterRange: match, in: container, storage: storage) {
                 NSBezierPath(roundedRect: pill.offsetBy(dx: origin.x, dy: origin.y), xRadius: 4, yRadius: 4).fill()
             }
@@ -126,6 +173,98 @@ class SearchMarkingLayoutManager: NSLayoutManager {
             g = NSMaxRange(part)
         }
         return result
+    }
+}
+
+/// Where the stepped-to match is among the matches of the search in the shown note.
+struct SearchPosition: Equatable {
+    var index: Int
+    var count: Int
+}
+
+/// Steps through the matches of the search in the shown note: Return / ⇧Return in the search field, ⌘G / ⇧⌘G in
+/// the editor or the preview. The editor puts its cursor on the match, which the preview follows in the split layout.
+@MainActor
+final class SearchStepper {
+    weak var editor: NSTextView?
+    weak var preview: NSTextView?
+    var onStep: ((SearchPosition) -> Void)?
+
+    /// Whether ⌘G / ⇧⌘G in `tv` step through the search: not while the find bar is used.
+    func isActive(in tv: NSTextView) -> Bool {
+        guard let lm = tv.layoutManager as? SearchMarkingLayoutManager, !lm.searchTerms.isEmpty else { return false }
+        return !(tv.enclosingScrollView?.isFindBarVisible ?? false)
+    }
+
+    /// Forward (true) or back for the Find Next / Find Previous menu items; nil for other find actions.
+    static func direction(of sender: Any?) -> Bool? {
+        guard let tag = (sender as? NSValidatedUserInterfaceItem)?.tag else { return nil }
+        switch tag {
+        case NSTextFinder.Action.nextMatch.rawValue: return true
+        case NSTextFinder.Action.previousMatch.rawValue: return false
+        default: return nil
+        }
+    }
+
+    @discardableResult
+    func step(forward: Bool, in tv: NSTextView) -> Bool {
+        guard isActive(in: tv), let lm = tv.layoutManager as? SearchMarkingLayoutManager,
+              let container = tv.textContainer else { return false }
+        let isEditor = tv === editor
+        var location: Int
+        if isEditor {
+            location = tv.selectedRange().location
+            // Still on the match stepped to: go past it.
+            if let current = lm.currentMatch, location >= current.location, location <= NSMaxRange(current) {
+                location = current.location
+                if forward { location += 1 }
+            }
+        } else if let current = lm.currentMatch {
+            location = current.location + (forward ? 1 : 0)
+        } else {
+            var rect = tv.visibleRect
+            rect.origin.x -= tv.textContainerOrigin.x
+            rect.origin.y -= tv.textContainerOrigin.y
+            let glyphs = lm.glyphRange(forBoundingRect: rect, in: container)
+            location = glyphs.length > 0 ? lm.characterIndexForGlyph(at: glyphs.location) : 0
+        }
+        guard let found = lm.step(forward: forward, from: location) else {
+            onStep?(SearchPosition(index: 0, count: 0))
+            return true
+        }
+        if isEditor {
+            if let vim = (tv as? MarkdownTextView)?.vim { vim.jump(to: found.match.location) } else { tv.setSelectedRange(found.match) }
+        }
+        tv.scrollRangeToVisible(found.match)
+        // Away from the edges, a third down the view.
+        let glyphs = lm.glyphRange(forCharacterRange: found.match, actualCharacterRange: nil)
+        let rect = lm.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: 0, dy: tv.textContainerOrigin.y)
+        let visible = tv.visibleRect
+        if rect.minY < visible.minY + visible.height * 0.2 || rect.maxY > visible.maxY - visible.height * 0.2 {
+            tv.scroll(NSPoint(x: visible.minX, y: max(0, rect.midY - visible.height / 3)))
+        }
+        if tv.window != nil { tv.showFindIndicator(for: found.match) }
+        onStep?(SearchPosition(index: found.index, count: found.count))
+        return true
+    }
+}
+
+/// Find Next / Find Previous step through the search while one is active.
+@MainActor
+protocol SearchSteppingTextView: NSTextView {
+    var stepper: SearchStepper? { get }
+}
+
+@MainActor
+extension SearchSteppingTextView {
+    func stepSearch(_ sender: Any?) -> Bool {
+        guard let forward = SearchStepper.direction(of: sender), let stepper else { return false }
+        return stepper.step(forward: forward, in: self)
+    }
+
+    func validatesSearchStep(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        (item.action == #selector(NSTextView.performTextFinderAction(_:)) || item.action == #selector(NSTextView.performFindPanelAction(_:)))
+            && SearchStepper.direction(of: item) != nil && stepper?.isActive(in: self) == true
     }
 }
 
@@ -171,9 +310,22 @@ final class PillBackgroundLayoutManager: SearchMarkingLayoutManager {
 }
 
 /// Text view of the preview: readable width, clickable task list checkboxes and heading anchors.
-final class PreviewTextView: NSTextView, ReadableWidth {
+final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
     var maxLineWidth: CGFloat? {
         didSet { if oldValue != maxLineWidth { updateReadableInset() } }
+    }
+    weak var stepper: SearchStepper?
+
+    override func performTextFinderAction(_ sender: Any?) {
+        if !stepSearch(sender) { super.performTextFinderAction(sender) }
+    }
+
+    override func performFindPanelAction(_ sender: Any?) {
+        if !stepSearch(sender) { super.performFindPanelAction(sender) }
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        validatesSearchStep(item) || super.validateUserInterfaceItem(item)
     }
     let minimumInset = NSSize(width: 28, height: 22)
     var onCheckbox: ((Int) -> Void)?
@@ -272,16 +424,18 @@ struct MarkdownPreview: NSViewRepresentable {
     var isShown = true
     var readableWidth: Bool
     var highlights: [String] = []
+    var stepper: SearchStepper?
     var onLink: (URL) -> Void
 
     init(markdown: String, noteId: String, renderer: MarkdownRenderer, isShown: Bool = true, readableWidth: Bool,
-         highlights: [String] = [], onLink: @escaping (URL) -> Void) {
+         highlights: [String] = [], stepper: SearchStepper? = nil, onLink: @escaping (URL) -> Void) {
         box = TextBox(markdown)
         self.noteId = noteId
         self.renderer = renderer
         self.isShown = isShown
         self.readableWidth = readableWidth
         self.highlights = highlights
+        self.stepper = stepper
         self.onLink = onLink
     }
 
@@ -318,6 +472,8 @@ struct MarkdownPreview: NSViewRepresentable {
         tv.onResize = { [weak coordinator] in coordinator?.widthChanged() }
         scroll.documentView = tv
         coordinator.textView = tv
+        tv.stepper = stepper
+        stepper?.preview = tv
         coordinator.observeRemoteImages()
         return scroll
     }
