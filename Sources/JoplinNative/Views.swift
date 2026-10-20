@@ -316,6 +316,8 @@ struct NoteListView: View {
                     }
                     .pickerStyle(.inline)
                     Toggle("Uncompleted To-dos on Top", isOn: $model.uncompletedTodosOnTop)
+                    Divider()
+                    Toggle("Show Note Previews", isOn: $model.showNotePreviews)
                 } label: {
                     Label("Sort", systemImage: "arrow.up.arrow.down")
                 }
@@ -373,6 +375,8 @@ struct NoteRow: View {
     @Environment(AppModel.self) private var model
 
     private var done: Bool { note.isTodo && note.todoCompleted > 0 }
+    /// Search results keep the text around the match even when the list shows only titles.
+    private var showsPreview: Bool { model.showNotePreviews || !model.searchTerms.isEmpty }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -387,17 +391,19 @@ struct NoteRow: View {
                     .strikethrough(done)
                     .foregroundStyle(done ? .secondary : .primary)
                     .lineLimit(1)
-                HStack(spacing: 6) {
-                    Text(shortDate(note.userUpdatedTime))
-                        .foregroundStyle(.primary.opacity(0.75))
-                    Text(highlighted(note.snippet.isEmpty ? "No additional text" : note.snippet))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                if showsPreview {
+                    HStack(spacing: 6) {
+                        Text(shortDate(note.userUpdatedTime))
+                            .foregroundStyle(.primary.opacity(0.75))
+                        Text(highlighted(note.snippet.isEmpty ? "No additional text" : note.snippet))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: 12))
                 }
-                .font(.system(size: 12))
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, showsPreview ? 4 : 2)
     }
 
     /// Marks the words of the active search.
@@ -780,6 +786,7 @@ struct GeneralSettings: View {
                     Text("Title").tag(NoteSort.title)
                 }
                 Toggle("Uncompleted to-dos on top", isOn: $model.uncompletedTodosOnTop)
+                Toggle("Show the date and start of each note in the list", isOn: $model.showNotePreviews)
             }
             Section("Sidebar") {
                 Toggle("Keep parent notebooks visible while scrolling", isOn: $model.stickyNotebooks)

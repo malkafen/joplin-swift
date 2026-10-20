@@ -103,6 +103,7 @@ struct AppCommands: Commands {
             Toggle("Show Tags in Sidebar", isOn: Binding(get: { model.showSidebarTags }, set: { model.showSidebarTags = $0 }))
                 .keyboardShortcut("t", modifiers: [.command, .control])
             Toggle("Show Tags Above Notes", isOn: Binding(get: { model.showNoteTags }, set: { model.showNoteTags = $0 }))
+            Toggle("Show Note Previews", isOn: Binding(get: { model.showNotePreviews }, set: { model.showNotePreviews = $0 }))
             Divider()
         }
 
