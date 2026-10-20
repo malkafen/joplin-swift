@@ -249,6 +249,43 @@ import Testing
         #expect(tv.string.hasSuffix("second edit"))
     }
 
+    @Test func typingReplacesOnlyTheChangedBlocks() throws {
+        let body = (1...60).map { "Paragraph \($0) with **bold**.\n\n- [ ] task \($0)\n\n| a | b |\n|---|---|\n| \($0) | x |\n" }
+            .joined(separator: "\n")
+        let (tv, _, coordinator, _) = preview(body)
+        let storage = try #require(tv.textStorage)
+        func check(_ markdown: String) {
+            coordinator.markdown = markdown
+            coordinator.render(keepScroll: true, incremental: true)
+            let full = MarkdownPreview.Coordinator.rendered(markdown, MarkdownRenderer(baseSize: 14) { _ in nil }, width: 640, highlights: [])
+            #expect(tv.textStorage === storage)
+            #expect(tv.string == full.text.string)
+            func lines(_ s: NSAttributedString) -> [Int] {
+                var out: [Int] = []
+                s.enumerateAttribute(.jnCheckbox, in: NSRange(location: 0, length: s.length)) { value, _, _ in
+                    if let box = value as? CheckboxLine { out.append(box.line) }
+                }
+                return out
+            }
+            #expect(lines(storage) == lines(full.text))
+        }
+        check("Intro\n\n" + body)
+        check("Intro\n\n" + body.replacingOccurrences(of: "Paragraph 30 with", with: "Paragraph 30 edited with"))
+        check(body.replacingOccurrences(of: "- [ ] task 40\n\n", with: ""))
+
+        // The preview follows a position in the source.
+        let target = (body as NSString).range(of: "Paragraph 30 ")
+        coordinator.markdown = body
+        coordinator.render(keepScroll: true)
+        let scroll = try #require(tv.enclosingScrollView)
+        tv.scroll(toSource: target.location, offset: 0)
+        let top = scroll.contentView.bounds.minY
+        #expect(top > 0)
+        let glyph = tv.layoutManager!.glyphIndex(for: NSPoint(x: 10, y: top - tv.textContainerOrigin.y + 5), in: tv.textContainer!)
+        let shown = tv.layoutManager!.characterIndexForGlyph(at: glyph)
+        #expect((tv.string as NSString).substring(from: shown).hasPrefix("Paragraph 30"))
+    }
+
     @Test func remoteImagesTriggerRerender() {
         let (tv, _, coordinator, _) = preview("![x](https://img.test/a.png)")
         coordinator.markdown = "![x](https://img.test/a.png)"
