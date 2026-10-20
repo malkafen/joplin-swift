@@ -186,14 +186,26 @@ import Testing
         #expect(paragraph(of: "four", in: s)?.paragraphSpacing == 11)
     }
 
+    @Test func blocksMapSourceToRendering() {
+        let md = "# Title\n\nSome text\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n- [ ] x\n"
+        let doc = renderer.renderDocument(md)
+        #expect(doc.blocks.count == 4)
+        #expect(doc.blocks.first?.rendered.location == 0)
+        #expect(doc.blocks.last?.rendered.upperBound == doc.text.length)
+        for (a, b) in zip(doc.blocks, doc.blocks.dropFirst()) { #expect(a.rendered.upperBound == b.rendered.location) }
+        #expect((md as NSString).substring(with: doc.blocks[1].source) == "Some text\n")
+        #expect(doc.blocks.map(\.line) == [1, 3, 5, 9])
+        #expect(doc.headings == ["title"])
+    }
+
     @Test func checklists() throws {
         let s = render("intro\n\n- [ ] todo\n- [x] done")
         #expect(s.string == "intro\n\t\u{FFFC}\ttodo\n\t\u{FFFC}\tdone")
         let boxes = (s.string as NSString)
         let first = boxes.range(of: "\u{FFFC}")
         let second = boxes.range(of: "\u{FFFC}", options: .backwards)
-        #expect(s.attribute(.jnCheckbox, at: first.location, effectiveRange: nil) as? Int == 3)
-        #expect(s.attribute(.jnCheckbox, at: second.location, effectiveRange: nil) as? Int == 4)
+        #expect((s.attribute(.jnCheckbox, at: first.location, effectiveRange: nil) as? CheckboxLine)?.line == 3)
+        #expect((s.attribute(.jnCheckbox, at: second.location, effectiveRange: nil) as? CheckboxLine)?.line == 4)
         #expect(s.attribute(.attachment, at: first.location, effectiveRange: nil) is NSTextAttachment)
         #expect(attribute(.foregroundColor, of: "done", in: s, as: NSColor.self) == .secondaryLabelColor)
         #expect(attribute(.foregroundColor, of: "todo", in: s, as: NSColor.self) == .labelColor)
@@ -314,7 +326,7 @@ import Testing
         #expect(paragraph(of: "⁄2", in: s)?.alignment == .center)
         // Line numbers survive the extraction: the checkbox still points at line 7.
         let box = (s.string as NSString).range(of: "\u{FFFC}", options: .backwards)
-        #expect(s.attribute(.jnCheckbox, at: box.location, effectiveRange: nil) as? Int == 7)
+        #expect((s.attribute(.jnCheckbox, at: box.location, effectiveRange: nil) as? CheckboxLine)?.line == 7)
         let fenced = render("```math\nx_1^2\n```")
         #expect(fenced.string == "x12")
         #expect((fenced.attribute(.baselineOffset, at: 1, effectiveRange: nil) as? CGFloat ?? 0) < 0)

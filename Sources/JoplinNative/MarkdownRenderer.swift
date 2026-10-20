@@ -5,8 +5,38 @@ import Markdown
 extension NSAttributedString.Key {
     /// Slug of a heading, the target of `#slug` links and the table of contents.
     static let jnAnchor = NSAttributedString.Key("JNAnchor")
-    /// 1-based source line of a task list checkbox; clicking it toggles the box in the note.
+    /// `CheckboxLine` of a task list checkbox; clicking it toggles the box in the note.
     static let jnCheckbox = NSAttributedString.Key("JNCheckbox")
+}
+
+/// 1-based source line of a task list checkbox. A reference, so the preview can shift the lines of the blocks it keeps
+/// when an edit above adds or removes lines, without touching (and re-laying out) its text.
+final class CheckboxLine: NSObject {
+    var line: Int
+    init(_ line: Int) { self.line = line }
+}
+
+/// A top-level block of a rendered note.
+struct RenderedBlock {
+    /// UTF-16 range of the block's source lines in the Markdown.
+    var source: NSRange
+    /// 1-based first source line.
+    var line: Int
+    /// Range of the block in the rendered text.
+    var rendered: NSRange
+}
+
+/// A rendered note with what the preview needs to update and scroll it block by block.
+struct RenderedDocument {
+    var text: NSAttributedString
+    /// Holds images or diagrams sized to `maxImageWidth`.
+    var sizedToWidth: Bool
+    /// In document order; together they cover the whole text.
+    var blocks: [RenderedBlock]
+    /// Heading slugs in document order.
+    var headings: [String]
+    /// Holds a `[toc]`, which depends on every heading.
+    var hasTOC: Bool
 }
 
 /// Renders Markdown into an NSAttributedString using AppKit text blocks and tables (no web view).
@@ -73,18 +103,51 @@ struct MarkdownRenderer {
         renderDocument(markdown, maxImageWidth: maxImageWidth).text
     }
 
-    /// The rendered note, and whether it holds images or diagrams sized to `maxImageWidth`.
-    func renderDocument(_ markdown: String, maxImageWidth: CGFloat = 640) -> (text: NSAttributedString, sizedToWidth: Bool) {
+    /// The rendered note with the source and rendered range of each top-level block.
+    func renderDocument(_ markdown: String, maxImageWidth: CGFloat = 640) -> RenderedDocument {
+        // The extraction keeps the lines, so block lines are lines of `markdown`.
         let (source, formulas) = MathExtractor.extract(markdown)
         let document = Document(parsing: source)
         let builder = AttributedBuilder(renderer: self, maxImageWidth: maxImageWidth, formulas: formulas)
         builder.collectHeadings(document)
-        builder.blocks(document.children, BlockStyle())
+        let lineStarts = Self.lineStarts(markdown)
+        let sourceLength = lineStarts.last ?? 0
+        func offset(ofLine line: Int) -> Int { line - 1 < lineStarts.count - 1 ? lineStarts[max(0, line - 1)] : sourceLength }
+        var blocks: [RenderedBlock] = []
+        for child in document.children {
+            let start = builder.out.length
+            builder.blocks(CollectionOfOne(child), BlockStyle())
+            guard let range = child.range else { continue }
+            let from = offset(ofLine: range.lowerBound.line)
+            let to = max(from, offset(ofLine: range.upperBound.line + 1))
+            blocks.append(RenderedBlock(source: NSRange(location: from, length: to - from), line: range.lowerBound.line,
+                                        rendered: NSRange(location: start, length: builder.out.length - start)))
+        }
         // Drop the trailing paragraph break and spacers.
         while builder.out.length > 0, builder.out.mutableString.character(at: builder.out.length - 1) == 10 {
             builder.out.deleteCharacters(in: NSRange(location: builder.out.length - 1, length: 1))
         }
-        return (builder.out, builder.sizedToWidth)
+        // Blocks cover the text without gaps: one without a source range joins the next.
+        var position = 0
+        for i in blocks.indices {
+            let end = i == blocks.count - 1 ? builder.out.length : min(blocks[i].rendered.upperBound, builder.out.length)
+            blocks[i].rendered = NSRange(location: position, length: max(0, end - position))
+            position = max(position, end)
+        }
+        return RenderedDocument(text: builder.out, sizedToWidth: builder.sizedToWidth, blocks: blocks,
+                                headings: builder.headingSlugs, hasTOC: builder.hasTOC)
+    }
+
+    /// UTF-16 offsets of the line starts, followed by the length.
+    static func lineStarts(_ text: String) -> [Int] {
+        var starts = [0]
+        var i = 0
+        for unit in text.utf16 {
+            i += 1
+            if unit == 10 { starts.append(i) }
+        }
+        starts.append(i)
+        return starts
     }
 
     /// GitHub-style heading anchor: lowercase, punctuation removed, spaces as dashes.
@@ -325,6 +388,8 @@ private final class AttributedBuilder {
     /// Symbols drawn so far: making one is slow, and a long checklist needs thousands of the same.
     private var symbols: [String: NSAttributedString] = [:]
     private(set) var sizedToWidth = false
+    private(set) var hasTOC = false
+    var headingSlugs: [String] { headings.map(\.slug) }
 
     private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
     private static let highlight = try! NSRegularExpression(pattern: "==(?=\\S)(.+?)(?<=\\S)==")
@@ -701,7 +766,7 @@ private final class AttributedBuilder {
                 if let icon = symbolAttachment(symbol, colors: colors, font: font(InlineStyle(size: base * 1.12))) {
                     let marker = NSMutableAttributedString(attributedString: icon)
                     var extra: [NSAttributedString.Key: Any] = [.cursor: NSCursor.pointingHand]
-                    if let line = item.range?.lowerBound.line { extra[.jnCheckbox] = line }
+                    if let line = item.range?.lowerBound.line { extra[.jnCheckbox] = CheckboxLine(line) }
                     marker.addAttributes(extra, range: NSRange(location: 0, length: marker.length))
                     prefix.append(marker)
                 }
@@ -824,6 +889,7 @@ private final class AttributedBuilder {
     }
 
     private func tableOfContents(_ b: BlockStyle) {
+        hasTOC = true
         guard !headings.isEmpty else { return }
         let top = headings.map(\.level).min() ?? 1
         let box = DecoratedBlock()
