@@ -525,6 +525,17 @@ struct MarkdownPreview: NSViewRepresentable {
     }
 }
 
+/// Split view whose divider can be taken away: a hidden pane still leaves the divider (and its last drawing) behind.
+final class NoteSplitNSView: NSSplitView {
+    var showsDivider = true {
+        didSet { if oldValue != showsDivider { needsDisplay = true } }
+    }
+    override var dividerThickness: CGFloat { showsDivider ? super.dividerThickness : 0 }
+    override func drawDivider(in rect: NSRect) {
+        if showsDivider { super.drawDivider(in: rect) }
+    }
+}
+
 /// Editor and preview in a native split view. Changing the layout collapses a pane instead of replacing the views:
 /// loading a huge note into a new editor or preview takes a noticeable time, switching should not.
 struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
@@ -534,8 +545,8 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
 
     func makeCoordinator() -> Coordinator { Coordinator(editor: editor, preview: preview) }
 
-    func makeNSView(context: Context) -> NSSplitView {
-        let split = NSSplitView()
+    func makeNSView(context: Context) -> NoteSplitNSView {
+        let split = NoteSplitNSView()
         split.isVertical = true
         split.dividerStyle = .thin
         split.delegate = context.coordinator
@@ -546,7 +557,7 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
         return split
     }
 
-    func updateNSView(_ split: NSSplitView, context: Context) {
+    func updateNSView(_ split: NoteSplitNSView, context: Context) {
         let c = context.coordinator
         c.editor.rootView = editor
         c.preview.rootView = preview
@@ -558,7 +569,7 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
     final class Coordinator: NSObject, NSSplitViewDelegate {
         let editor: NSHostingView<Editor>
         let preview: NSHostingView<Preview>
-        weak var split: NSSplitView?
+        weak var split: NoteSplitNSView?
         private var layout: EditorLayout?
         /// Share of the width the editor takes in the split layout, as last dragged.
         private var fraction: CGFloat = 0.5
@@ -589,12 +600,35 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
             }
         }
 
-        @objc private func editorScrolled(_ notification: Notification) { syncPreview() }
+        private var syncQueued = false
+
+        /// Synced at once and again after the display: a far jump settles the editor's layout only while drawing.
+        @objc private func editorScrolled(_ notification: Notification) {
+            syncPreview()
+            guard !syncQueued else { return }
+            syncQueued = true
+            DispatchQueue.main.async { [weak self] in
+                self?.syncQueued = false
+                self?.syncPreview()
+            }
+        }
 
         func syncPreview() {
             guard layout == .split, let tv = editorText, let preview = previewText, let clip = tv.enclosingScrollView?.contentView,
                   let lm = tv.layoutManager, let container = tv.textContainer else { return }
             let visible = clip.bounds
+            // The caret's line when it is in view, at the same height in both panes: blocks render taller or shorter
+            // than their source (tables), so lining up the top lines can leave the edited line out of the preview.
+            let length = (tv.string as NSString).length
+            let caret = tv.selectedRange().location
+            if length > 0, caret <= length {
+                let glyph = lm.glyphIndexForCharacter(at: min(caret, length - 1))
+                let y = lm.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + tv.textContainerOrigin.y
+                if y >= visible.minY, y < visible.maxY {
+                    preview.scroll(toSource: caret, offset: y - visible.minY)
+                    return
+                }
+            }
             if visible.minY <= 0 {
                 preview.scroll(toSource: 0, offset: 0)
                 return
@@ -603,12 +637,12 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
                 preview.scroll(toSource: Int.max, offset: -.greatestFiniteMagnitude)
                 return
             }
-            // The first line in view; laid out already, as it is shown.
+            // The first line in view. After a jump (Vim `G`) it is not laid out yet: the scroll comes before the display.
             let line = NSRect(x: 0, y: visible.minY - tv.textContainerOrigin.y, width: container.size.width, height: 1)
-            let glyphs = lm.glyphRange(forBoundingRectWithoutAdditionalLayout: line, in: container)
+            let glyphs = lm.glyphRange(forBoundingRect: line, in: container)
             guard glyphs.location < lm.numberOfGlyphs else { return }
             let character = lm.characterIndexForGlyph(at: glyphs.location)
-            let fragment = lm.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil, withoutAdditionalLayout: true)
+            let fragment = lm.lineFragmentRect(forGlyphAt: glyphs.location, effectiveRange: nil)
             preview.scroll(toSource: character, offset: fragment.minY + tv.textContainerOrigin.y - visible.minY)
         }
 
@@ -621,6 +655,7 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
             let focused = (window?.firstResponder as? NSView).map { $0.isDescendant(of: split) } ?? false
             editor.isHidden = new == .preview
             preview.isHidden = new == .editor
+            split.showsDivider = new == .split
             split.adjustSubviews()
             if new == .split {
                 place()
