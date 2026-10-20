@@ -184,7 +184,7 @@ struct SplitMix: RandomNumberGenerator {
         _ = NSApplication.shared
         var rng = SplitMix(state: UInt64(ProcessInfo.processInfo.environment["JN_FUZZ_SEED"] ?? "") ?? 1)
         let iterations = Int(ProcessInfo.processInfo.environment["JN_FUZZ_N"] ?? "") ?? 300
-        let keys = Array("hjklwbeWBE0^$gGfFtT;,{}+-oOiaIAn123\u{1B}\u{04}\u{15}\r\u{7F}x é")
+        let keys = Array("hjklwbeWBE0^$gGfFtT;,{}+-dcy><~xXDCYsSrJpPoOiaIAuv V123\u{1B}\u{12}\u{04}\u{15}\r\u{7F}x é")
         for _ in 0..<max(1, iterations / 10) {
             let tv = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
             tv.allowsUndo = true
