@@ -16,7 +16,8 @@ for bundle in "$BIN"/*.xctest; do
   [ ${#OBJECTS[@]} -eq 0 ] && OBJECTS+=("$bundle/Contents/MacOS/$(basename "$bundle" .xctest)") \
     || OBJECTS+=(-object "$bundle/Contents/MacOS/$(basename "$bundle" .xctest)")
 done
-IGNORE='(\.build|Tests)/'
+# The stress harness only runs against a real window (scripts/stress).
+IGNORE='(\.build|Tests)/|StressProbe\.swift'
 
 xcrun llvm-cov report "${OBJECTS[@]}" -instr-profile "$PROFILE" -ignore-filename-regex "$IGNORE"
 

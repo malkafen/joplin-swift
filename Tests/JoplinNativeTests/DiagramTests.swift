@@ -315,6 +315,20 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(found.count == 2)
         #expect(found.first { $0.title == "Long" }?.snippet.contains("needle") == true)
         #expect(found.first { $0.title == "needle in title" }?.snippet == "body")
+        // One or two letters match nearly everything: the start of the note instead.
+        #expect(store.notes(filter: .search("ne"), sort: .title).first { $0.title == "Long" }?.snippet.hasPrefix("lorem ipsum") == true)
+    }
+
+    @Test func onlyTheFirstSearchResultsGetSnippets() throws {
+        let store = try Store(directory: temporaryDirectory())
+        let body = String(repeating: "lorem ipsum dolor ", count: 20) + "the needle"
+        for i in 0..<(Store.snippetRows + 5) {
+            try store.createNote(parentId: "", title: String(format: "%04d", i), body: body)
+        }
+        let found = store.notes(filter: .search("needle"), sort: .title)
+        #expect(found.count == Store.snippetRows + 5)
+        #expect(found.prefix(Store.snippetRows).allSatisfy { $0.snippet.hasPrefix("…") && $0.snippet.hasSuffix("the needle") })
+        #expect(found.last?.snippet.hasPrefix("lorem ipsum") == true)
     }
 
     @Test func longNotesAreExcerptedAroundTheMatch() throws {
