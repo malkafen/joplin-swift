@@ -161,6 +161,7 @@ import Testing
         _ = render(SettingsView().environment(model), size: CGSize(width: 480, height: 640))
         model.showSidebarTags = false
         model.showNoteTags = false
+        model.showNotePreviews = true
         model.readableWidth = false
         model.previewFont = .serif
         model.layout = .split

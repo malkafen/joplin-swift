@@ -45,6 +45,8 @@ Joplin Server account, after a minute of idling:
 - **Sticky scroll** in the notebook tree: while the sidebar scrolls, the parent notebooks of the rows at the top
   stay pinned (click one to jump to it), so deep hierarchies keep their context. Settings → General.
 - **Notes and to-dos**: checkboxes in the list, completed to-dos sorted to the bottom, duplicate, move, copy link
+- **Compact note list**: only titles by default; turn on **Show Note Previews** (View menu, the Sort menu or
+  Settings → General) to see the date and the start of each note. Search results always show the text around the match.
 - **Markdown editor**: `NSTextView` with syntax highlighting (markup characters dimmed, fenced code coloured),
   native undo, spell checking and the find bar
 - **Native preview**: rendered with `NSAttributedString`, `NSTextTable` and `NSTextBlock`, no web view:

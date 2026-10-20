@@ -62,6 +62,7 @@ import Testing
         model.showSidebarTags = true
         model.sidebarTagsExpanded = false
         model.showNoteTags = false
+        model.showNotePreviews = true
         model.cycleLayout()
         #expect(model.layout == .editor)
         model.cycleLayout()
@@ -73,7 +74,7 @@ import Testing
 
         let againHarness = try ModelHarness(welcome: false) { d in
             for key in ["editorFont", "previewFont", "previewFontSize", "codeFont", "readableWidth", "loadRemoteImages",
-                        "showSidebarTags", "sidebarTagsExpanded", "showNoteTags", "editorMonospaced"] {
+                        "showSidebarTags", "sidebarTagsExpanded", "showNoteTags", "showNotePreviews", "editorMonospaced"] {
                 d.set(h.defaults.object(forKey: key), forKey: key)
             }
         }
@@ -87,6 +88,7 @@ import Testing
         #expect(again.showSidebarTags)
         #expect(!again.sidebarTagsExpanded)
         #expect(!again.showNoteTags)
+        #expect(again.showNotePreviews)
         #expect(!again.renderer.loadsRemoteImages)
         #expect(again.previewTypography == Typography(family: FontFamily(name: "Helvetica"), size: 17, codeFamily: FontFamily(name: "Menlo")))
     }
@@ -105,6 +107,7 @@ import Testing
         #expect(model.renderer.loadsRemoteImages)
         #expect(model.showSidebarTags)
         #expect(model.showNoteTags)
+        #expect(!model.showNotePreviews)
     }
 
     @Test func textSizeShortcuts() throws {

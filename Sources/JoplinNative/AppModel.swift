@@ -260,6 +260,11 @@ final class AppModel {
         didSet { defaults.set(showNoteTags, forKey: "showNoteTags") }
     }
 
+    /// The note list shows the date and the start of each note under its title; off, only titles.
+    var showNotePreviews = false {
+        didSet { defaults.set(showNotePreviews, forKey: "showNotePreviews") }
+    }
+
     // MARK: Shortcuts
 
     /// User shortcuts; a missing entry means the default, `nil` inside means cleared.
@@ -418,6 +423,7 @@ final class AppModel {
         showSidebarTags = defaults.object(forKey: "showSidebarTags") as? Bool ?? true
         sidebarTagsExpanded = defaults.object(forKey: "sidebarTagsExpanded") as? Bool ?? true
         showNoteTags = defaults.object(forKey: "showNoteTags") as? Bool ?? true
+        showNotePreviews = defaults.bool(forKey: "showNotePreviews")
         trashExpanded = defaults.bool(forKey: "trashExpanded")
         vimMode = defaults.bool(forKey: "vimMode")
         stickyNotebooks = defaults.object(forKey: "stickyNotebooks") as? Bool ?? true
