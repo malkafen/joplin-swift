@@ -42,7 +42,14 @@ public struct NoteSummary: Identifiable, Hashable, Sendable {
     public var userUpdatedTime: Int64
     public var userCreatedTime: Int64
     public var deletedTime: Int64
-    public var snippet: String
+    /// The start of the note (or the text around a search match) without Markdown. Cleaned when read, so a list of
+    /// thousands of notes does not clean them all on every reload while only the visible rows show it.
+    public var snippet: String {
+        get { plainSnippet ?? Snippet.make(from: markdownSnippet) }
+        set { plainSnippet = newValue }
+    }
+    private var markdownSnippet: String
+    private var plainSnippet: String?
 
     init(row: Row) {
         id = row.string("id")
@@ -54,7 +61,7 @@ public struct NoteSummary: Identifiable, Hashable, Sendable {
         userUpdatedTime = row.int("user_updated_time")
         userCreatedTime = row.int("user_created_time")
         deletedTime = row.int("deleted_time")
-        snippet = Snippet.make(from: row.string("snippet"))
+        markdownSnippet = row.string("snippet")
     }
 }
 

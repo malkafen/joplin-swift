@@ -722,7 +722,7 @@ private struct NoteFooter: View {
         parts.append(count(stats.lines, "line"))
         parts.append(count(stats.words, "word"))
         parts.append(count(stats.characters, "character"))
-        if stats.readingMinutes > 0 { parts.append("\(stats.readingMinutes) min read") }
+        if stats.readingMinutes > 0 { parts.append("\(stats.readingMinutes.formatted()) min read") }
         return parts.joined(separator: "  ·  ")
     }
 

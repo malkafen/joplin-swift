@@ -204,19 +204,8 @@ public final class Store {
         if !showCompletedTodos { clauses.append("NOT (is_todo = 1 AND todo_completed > 0)") }
         clauses.append("encryption_applied = 0")
 
-        // Search results show the text around the first match instead of the start of the note. snippet() tokenizes
-        // the whole note, which takes seconds for a huge one: those are left NULL and excerpted below.
-        var snippet = "substr(body, 1, 400)"
         var searchText: String?
-        if case .search(let text) = filter, !Store.ftsQuery(text).isEmpty {
-            searchText = text
-            snippet = """
-            CASE WHEN octet_length(body) > \(Store.longNote) THEN NULL ELSE
-            COALESCE(NULLIF((SELECT snippet(notes_fts, 1, '', '', '…', 24) FROM notes_fts
-                             WHERE notes_fts MATCH ? AND notes_fts.rowid = notes.rowid), ''), substr(body, 1, 400)) END
-            """
-            args.insert(Store.ftsQuery(text), at: 0)
-        }
+        if case .search(let text) = filter, !Store.ftsQuery(text).isEmpty { searchText = text }
 
         var order: [String] = []
         if uncompletedTodosOnTop { order.append("(is_todo = 1 AND todo_completed = 0) DESC") }
@@ -226,18 +215,43 @@ public final class Store {
         case .title: order.append("title COLLATE NOCASE ASC")
         }
         let sql = """
-        SELECT id, title, parent_id, is_todo, todo_completed, todo_due, user_updated_time, user_created_time, deleted_time,
-               \(snippet) AS snippet
+        SELECT rowid, id, title, parent_id, is_todo, todo_completed, todo_due, user_updated_time, user_created_time, deleted_time,
+               substr(body, 1, 400) AS snippet, octet_length(body) > \(Store.longNote) AS long
         FROM notes WHERE \(clauses.joined(separator: " AND ")) ORDER BY \(order.joined(separator: ", "))
         """
         let rows = (try? db.query(sql, args)) ?? []
         var summaries = rows.map(NoteSummary.init(row:))
-        if let searchText {
-            for (i, row) in rows.enumerated() where row["snippet"] is NSNull {
-                summaries[i].snippet = Snippet.make(from: excerpt(noteId: summaries[i].id, around: searchText))
+        if let searchText { snippetSearchResults(&summaries, rows: rows, search: searchText) }
+        return summaries
+    }
+
+    /// Search results that get the text around the first match instead of the start of the note. snippet() is costly
+    /// per note, and with a short prefix nearly every note matches: the rest keep the start of the note.
+    static let snippetRows = 200
+
+    private func snippetSearchResults(_ summaries: inout [NoteSummary], rows: [Row], search: String) {
+        // A prefix of one or two letters matches nearly every note, and FTS5 then merges the positions of all the
+        // words it starts: the start of the note says as much.
+        let words = search.split(whereSeparator: { $0.isWhitespace })
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'*")) }
+        guard words.allSatisfy({ $0.count >= 3 }) else { return }
+        let first = rows.indices.prefix(Store.snippetRows)
+        // snippet() tokenizes the whole note, which takes seconds for a huge one: those are excerpted instead.
+        let short = first.filter { rows[$0].int("long") == 0 }
+        if !short.isEmpty {
+            let index = Dictionary(uniqueKeysWithValues: short.map { (rows[$0].int("rowid"), $0) })
+            let sql = """
+            SELECT rowid, snippet(notes_fts, 1, '', '', '…', 24) AS snippet FROM notes_fts
+            WHERE notes_fts MATCH ? AND rowid IN (\(index.keys.map(String.init).joined(separator: ",")))
+            """
+            for row in (try? db.query(sql, [Store.ftsQuery(search)])) ?? [] {
+                guard let i = index[row.int("rowid")], !row.string("snippet").isEmpty else { continue }
+                summaries[i].snippet = Snippet.make(from: row.string("snippet"))
             }
         }
-        return summaries
+        for i in first where rows[i].int("long") != 0 {
+            summaries[i].snippet = Snippet.make(from: excerpt(noteId: summaries[i].id, around: search))
+        }
     }
 
     /// Notes longer than this (in UTF-8 bytes, which SQLite knows without reading the text) get their search snippet

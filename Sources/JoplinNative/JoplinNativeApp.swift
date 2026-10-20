@@ -203,6 +203,7 @@ enum Snapshot {
     /// `JN_IMPORT_DESKTOP` is "1" for the default Joplin Desktop profile, or a profile directory.
     static func scheduleIfRequested(model: AppModel, env: [String: String] = ProcessInfo.processInfo.environment,
                                     quit: @escaping @MainActor () -> Void = { NSApp.terminate(nil) }) {
+        StressProbe.start(model: model)
         guard let path = env["JN_SNAPSHOT"] else { return }
         let delay = Double(env["JN_SNAPSHOT_DELAY"] ?? "") ?? 3
         if let profile = env["JN_IMPORT_DESKTOP"] {

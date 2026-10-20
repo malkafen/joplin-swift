@@ -37,6 +37,27 @@ Joplin Server account, after a minute of idling:
 | App size | 579 MB | 3.7 MB |
 | UI | HTML/CSS in Chromium | AppKit / SwiftUI controls |
 
+### Stress test: 10 000 notes and notes of 1, 5 and 20 MB
+
+Both apps get the same library and go through the same steps, driven by scripts:
+[`scripts/stress`](scripts/stress/run.sh). The full table, the method and what is still slower are in
+[docs/benchmark.md](docs/benchmark.md). “Freeze” is the longest time the window could not respond.
+
+| | Joplin Desktop 3.7.21 | Joplin Native |
+|---|--:|--:|
+| Launch with 10 000 notes | 2.3 s | 1.1 s |
+| Memory after launch / at the end of the test | 640 MB / 7.8 GB | 131 MB / 0.4 GB |
+| 20 MB note: open in split, freeze | 6.2 s | 0.12 s |
+| 20 MB note: ⌘↓ to the end, freeze | 33.5 s | 0.08 s |
+| 20 MB note: keystroke in split | 0.95 s | 0.10 s |
+| 20 MB note: freeze while the preview catches up after typing | 17.3 s | 1.0 s |
+| Search typed letter by letter with a 5 MB note open, freeze | 0.7 s | 0.4 s |
+
+<p>
+<img src="docs/huge-note.png" alt="A 20 MB note open in split: 270 596 lines" width="420">
+<img src="docs/search.png" alt="Search: matches highlighted in the list, the editor and the preview" width="420">
+</p>
+
 ## Features
 
 - **Notebooks**: nested notebooks with emoji icons, drag & drop, trash with restore (notebooks in the trash fold
@@ -88,6 +109,9 @@ Joplin Server account, after a minute of idling:
   conflict copies for notes edited on two devices. Runs after edits, on an interval and with <kbd>⌘</kbd><kbd>S</kbd>.
 - **Interop**: import a Joplin Desktop profile, JEX archives and RAW / file-system sync folders. Export to JEX.
 - **Native look**: standard macOS sidebar, toolbar and materials; light and dark follow the system appearance
+
+  <img src="docs/light.png" alt="Joplin Native in the light appearance" width="640">
+
 - **Mac conventions**: menu bar commands and shortcuts, a Settings window, and opening `.jex` files from Finder
 
 ### Keyboard shortcuts
@@ -207,6 +231,10 @@ Environment variables for scripted checks, for example over SSH (no screen-recor
 | `JN_LAYOUT=split` | Start in the `editor`, `split` or `preview` layout |
 | `JN_APPEARANCE=dark` | Force the `dark` or `light` appearance |
 | `JN_SCROLL=1` | Scroll editor and preview to a fraction of their height (0 top, 1 bottom) before the snapshot |
+| `JN_STRESS_LOG=/tmp/x.json` | Run the stress scenario of [`scripts/stress`](scripts/stress/run.sh), write the measures and quit |
+| `JN_STRESS_ONLY=search` | Run only the search step, or one huge note (`Huge 5 MB`) |
+| `JN_STRESS_EXPECTED=N` | Number of search results that ends the search step |
+| `JN_STRESS_T0=seconds` | Unix time the app was launched at, to measure the launch |
 
 ```bash
 open --env JN_DATA_DIR=/tmp/demo --env JN_SNAPSHOT=/tmp/demo.png --env JN_SNAPSHOT_QUIT=1 "/Applications/Joplin Native.app"

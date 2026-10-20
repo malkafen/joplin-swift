@@ -364,6 +364,9 @@ final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
         super.mouseDown(with: event)
     }
 
+    /// Longest preview (UTF-16) that is laid out from the top to scroll exactly to a source location.
+    static let exactScrollLimit = 300_000
+
     /// Scrolls so that the rendering of the Markdown at `location` (UTF-16) is `offset` points below the top of the
     /// visible area. Within a block the position is interpolated, so a long table or list follows smoothly.
     func scroll(toSource location: Int, offset: CGFloat) {
@@ -384,8 +387,10 @@ final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
             let glyph = layoutManager.glyphIndexForCharacter(at: character)
             return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + textContainerOrigin.y
         }
-        // Positions are estimates until the text above is laid out. Done once: typing keeps the layout.
-        layoutManager.ensureLayout(forCharacterRange: NSRange(location: 0, length: min(storage.length, block.rendered.upperBound + 1)))
+        // Positions are estimates until the text above is laid out. Done once: typing keeps the layout. A huge preview
+        // would take seconds, so there only the block is laid out where the estimate puts it, which is where it shows.
+        let from = storage.length > PreviewTextView.exactScrollLimit ? block.rendered.location : 0
+        layoutManager.ensureLayout(forCharacterRange: NSRange(location: from, length: min(storage.length, block.rendered.upperBound + 1) - from))
         let start = top(of: block.rendered.location)
         let end = fraction > 0 ? top(of: block.rendered.upperBound) : start
         let maxY = max(0, frame.height - scroll.contentView.bounds.height)
