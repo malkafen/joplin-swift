@@ -153,6 +153,34 @@ extension String {
     /// Same UTF-16 code units. `==` compares canonical equivalence, which takes most of a second on a huge note with
     /// non-ASCII text bridged from a text view.
     func isLiterally(_ other: String) -> Bool { (self as NSString).isEqual(to: other) }
+
+    /// The size without reading the text: UTF-8 bytes of a native string, UTF-16 units of one bridged from a text
+    /// view. Either way of counting converts the other kind of string as a whole.
+    var quickLength: Int { utf8.withContiguousStorageIfAvailable(\.count) ?? (self as NSString).length }
+
+    /// The first paragraphs, about `limit` long, cut before a blank line when there is one.
+    func leadingParagraphs(limit: Int) -> String {
+        guard quickLength > limit else { return self }
+        if let head = utf8.withContiguousStorageIfAvailable({ bytes -> String in
+            let end = limit
+            var cut = end, line: Int?
+            var i = end - 1
+            while i > 0 {
+                if bytes[i] == 10 {
+                    if line == nil { line = i }
+                    if bytes[i - 1] == 10 { cut = i - 1; break }
+                }
+                i -= 1
+            }
+            if i == 0 { cut = line ?? end }
+            return String(decoding: UnsafeBufferPointer(rebasing: bytes[0..<cut]), as: UTF8.self)
+        }) {
+            return head
+        }
+        let ns = self as NSString
+        let cut = ns.range(of: "\n\n", options: .backwards, range: NSRange(location: 0, length: limit)).location
+        return ns.substring(to: cut == NSNotFound ? limit : cut)
+    }
 }
 
 struct MarkdownEditor: NSViewRepresentable {
@@ -164,7 +192,6 @@ struct MarkdownEditor: NSViewRepresentable {
     var highlights: [String] = []
     var vimMode = false
     var onVimMode: (VimEngine.Mode) -> Void = { _ in }
-    var onVimCommandLine: (String) -> Void = { _ in }
     var isEditable: Bool
     var bridge: EditorBridge
     var onChange: (String) -> Void
@@ -172,8 +199,8 @@ struct MarkdownEditor: NSViewRepresentable {
     var onPasteImage: (Data) -> String?
 
     init(text: String, noteId: String, typography: Typography, readableWidth: Bool, highlights: [String] = [],
-         vimMode: Bool = false, onVimMode: @escaping (VimEngine.Mode) -> Void = { _ in },
-         onVimCommandLine: @escaping (String) -> Void = { _ in }, isEditable: Bool, bridge: EditorBridge,
+         vimMode: Bool = false, onVimMode: @escaping (VimEngine.Mode) -> Void = { _ in }, isEditable: Bool,
+         bridge: EditorBridge,
          onChange: @escaping (String) -> Void, onDropFiles: @escaping ([URL]) -> String?,
          onPasteImage: @escaping (Data) -> String?) {
         box = TextBox(text)
@@ -183,7 +210,6 @@ struct MarkdownEditor: NSViewRepresentable {
         self.highlights = highlights
         self.vimMode = vimMode
         self.onVimMode = onVimMode
-        self.onVimCommandLine = onVimCommandLine
         self.isEditable = isEditable
         self.bridge = bridge
         self.onChange = onChange
@@ -201,7 +227,7 @@ struct MarkdownEditor: NSViewRepresentable {
         scroll.borderType = .noBorder
         scroll.hasHorizontalScroller = false
 
-        // TextKit 1 (Vim's highlights need the layout manager), laid out only where it is shown.
+        // TextKit 1, laid out only where it is shown: TextKit 2 lays out a huge note far more slowly.
         let tv = MarkdownTextView(usingTextLayoutManager: false)
         tv.frame = NSRect(origin: .zero, size: scroll.contentSize)
         tv.layoutManager?.allowsNonContiguousLayout = true
@@ -252,35 +278,21 @@ struct MarkdownEditor: NSViewRepresentable {
             let engine = VimEngine(textView: tv)
             let report = onVimMode
             engine.onModeChange = { report($0) }
-            let reportLine = onVimCommandLine
-            engine.onCommandLine = { reportLine($0) }
             tv.vim = engine
             engine.reset()
             report(engine.mode)
         } else if !vimMode, let engine = tv.vim {
             tv.vim = nil
-            engine.clearHighlights()
             if engine.mode != .insert { tv.setSelectedRange(NSRange(location: tv.selectedRange().location, length: 0)) }
         }
     }
 
     private func load(into tv: NSTextView, context: Context) {
         let c = context.coordinator
-        c.highlighter.configure(typography)
-        c.highlighter.searchTerms = highlights
-        tv.typingAttributes = c.highlighter.baseAttributes
-        c.highlighter.reset()
-        c.isLoading = true
-        tv.string = text
-        c.isLoading = false
-        c.lastText = text
-        tv.undoManager?.removeAllActions()
-        tv.setSelectedRange(NSRange(location: 0, length: 0))
-        tv.scrollToBeginningOfDocument(nil)
         c.noteId = noteId
         c.typography = typography
-        (tv as? MarkdownTextView)?.vim?.reset()
-        c.revealFirstMatch()
+        c.lastText = text
+        c.setText(text, typography: typography, highlights: highlights, in: tv, selection: nil)
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
@@ -288,7 +300,7 @@ struct MarkdownEditor: NSViewRepresentable {
         c.parent = self
         guard let tv = c.textView as? MarkdownTextView else { return }
         bridge.textView = tv
-        tv.isEditable = isEditable
+        tv.isEditable = isEditable && !c.isLoadingInBackground
         tv.maxLineWidth = readableWidth ? typography.readableWidth : nil
         configureVim(tv)
         if c.noteId != noteId {
@@ -307,20 +319,12 @@ struct MarkdownEditor: NSViewRepresentable {
             c.lastText = text
             guard !tv.string.isLiterally(text) else { return }
             // Changed outside the editor (e.g. checkbox toggled in the preview).
-            let selection = tv.selectedRange()
-            if tv.shouldChangeText(in: NSRange(location: 0, length: (tv.string as NSString).length), replacementString: text) {
-                c.highlighter.reset(keepingVisible: true)
-                c.isLoading = true
-                tv.string = text
-                c.isLoading = false
-                tv.didChangeText()
-            }
-            let length = (text as NSString).length
-            tv.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
+            c.setText(text, typography: typography, highlights: highlights, in: tv, selection: tv.selectedRange())
         }
     }
 
-    final class Coordinator: NSObject, NSTextViewDelegate, NSTextStorageDelegate {
+    @MainActor
+    final class Coordinator: NSObject, NSTextViewDelegate, @preconcurrency NSTextStorageDelegate {
         var parent: MarkdownEditor
         weak var textView: NSTextView?
         var noteId = ""
@@ -328,10 +332,119 @@ struct MarkdownEditor: NSViewRepresentable {
         var isLoading = false
         /// The text last loaded or reported; when the model hands it back nothing needs comparing.
         var lastText = ""
-        let highlighter = MarkdownHighlighter()
+        var highlighter = MarkdownHighlighter()
+        /// A huge note is being prepared off the main thread; meanwhile its start is shown, read-only.
+        private(set) var isLoadingInBackground = false
+        private var generation = 0
+        private let loadQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.editor", qos: .userInitiated)
+        /// Notes longer than this (`quickLength`) are put into a text storage and styled off the main thread: copying
+        /// and scanning a note of hundreds of thousands of lines takes a noticeable part of a second.
+        static let backgroundLength = 300_000
 
         init(_ parent: MarkdownEditor) {
             self.parent = parent
+        }
+
+        /// Shows `text`: a new note (selection nil: at the top, undo cleared) or a change made outside the editor.
+        func setText(_ text: String, typography: Typography, highlights: [String], in tv: NSTextView, selection: NSRange?) {
+            generation += 1
+            // The length in UTF-8 is known without reading a native string.
+            guard text.quickLength > Self.backgroundLength, tv.layoutManager != nil else {
+                isLoadingInBackground = false
+                highlighter.configure(typography)
+                highlighter.searchTerms = highlights
+                tv.typingAttributes = highlighter.baseAttributes
+                replaceText(text, in: tv, selection: selection)
+                return
+            }
+            if selection == nil {
+                // The start at once, in the old storage: a new one is laid out from scratch.
+                highlighter.configure(typography)
+                highlighter.searchTerms = highlights
+                tv.typingAttributes = highlighter.baseAttributes
+                replaceText(text.leadingParagraphs(limit: 20_000), in: tv, selection: nil)
+            }
+            isLoadingInBackground = true
+            tv.isEditable = false
+            let token = generation
+            let visible = selection.map { _ in highlighter.visibleRange } ?? NSRange(location: 0, length: 0)
+            nonisolated(unsafe) let fresh = MarkdownHighlighter()
+            fresh.configure(typography)
+            fresh.searchTerms = highlights
+            loadQueue.async { [weak self] in
+                let storage = NSTextStorage(string: text, attributes: fresh.baseAttributes)
+                fresh.show(visible, in: storage)
+                fresh.highlight(storage)
+                nonisolated(unsafe) let ready = storage
+                RunLoop.main.perform(inModes: [.common]) {
+                    MainActor.assumeIsolated {
+                        guard let self, self.generation == token, let tv = self.textView, let lm = tv.layoutManager else { return }
+                        self.install(ready, highlighter: fresh, typography: typography, in: tv, layoutManager: lm, selection: selection)
+                    }
+                }
+            }
+        }
+
+        private func replaceText(_ text: String, in tv: NSTextView, selection: NSRange?) {
+            if let selection {
+                guard tv.shouldChangeText(in: NSRange(location: 0, length: tv.textStorage?.length ?? 0), replacementString: text)
+                else { return }
+                highlighter.reset(keepingVisible: true)
+                isLoading = true
+                tv.string = text
+                isLoading = false
+                tv.didChangeText()
+                let length = tv.textStorage?.length ?? 0
+                tv.setSelectedRange(NSRange(location: min(selection.location, length), length: 0))
+                return
+            }
+            highlighter.reset()
+            isLoading = true
+            tv.string = text
+            isLoading = false
+            tv.undoManager?.removeAllActions()
+            tv.setSelectedRange(NSRange(location: 0, length: 0))
+            tv.scrollToBeginningOfDocument(nil)
+            (tv as? MarkdownTextView)?.vim?.reset()
+            revealFirstMatch()
+        }
+
+        /// Puts a storage prepared off the main thread into the editor.
+        private func install(_ storage: NSTextStorage, highlighter fresh: MarkdownHighlighter, typography loaded: Typography,
+                             in tv: NSTextView, layoutManager lm: NSLayoutManager, selection: NSRange?) {
+            isLoadingInBackground = false
+            let origin = tv.enclosingScrollView?.contentView.bounds.origin
+            tv.textStorage?.delegate = nil
+            lm.replaceTextStorage(storage)
+            storage.delegate = self
+            highlighter = fresh
+            tv.typingAttributes = fresh.baseAttributes
+            tv.undoManager?.removeAllActions()
+            tv.isEditable = parent.isEditable
+            if let selection {
+                // Each change of the text is its own step of undo otherwise; replacing a huge note is not undoable.
+                tv.setSelectedRange(NSRange(location: min(selection.location, storage.length), length: 0))
+                if let origin, let scroll = tv.enclosingScrollView {
+                    scroll.contentView.scroll(to: origin)
+                    scroll.reflectScrolledClipView(scroll.contentView)
+                }
+            } else {
+                tv.setSelectedRange(NSRange(location: 0, length: 0))
+                tv.scrollToBeginningOfDocument(nil)
+                (tv as? MarkdownTextView)?.vim?.reset()
+                revealFirstMatch()
+            }
+            // Settings changed while the note was being prepared.
+            if typography != loaded {
+                fresh.configure(typography)
+                tv.typingAttributes = fresh.baseAttributes
+                fresh.restyle(storage)
+            }
+            if parent.highlights != fresh.searchTerms {
+                fresh.searchTerms = parent.highlights
+                fresh.refresh(storage)
+            }
+            viewportChanged()
         }
 
         /// Shows the first search match with the system find indicator.
@@ -350,7 +463,6 @@ struct MarkdownEditor: NSViewRepresentable {
             rect.origin.y -= tv.textContainerOrigin.y
             let glyphs = lm.glyphRange(forBoundingRect: rect, in: container)
             highlighter.show(lm.characterRange(forGlyphRange: glyphs, actualGlyphRange: nil), in: storage)
-            MainActor.assumeIsolated { (tv as? MarkdownTextView)?.vim?.viewportChanged() }
         }
 
         func textDidChange(_ notification: Notification) {
@@ -425,19 +537,20 @@ final class MarkdownHighlighter {
 
     /// The note is styled within this many characters around the visible text and keeps the base style beyond:
     /// attribute runs across all of a huge note make every later change to it slow. Short notes fit entirely.
-    var radius = 100_000
+    var radius = 50_000
     /// Fenced code or display math longer than this is styled only where it overlaps what is being refreshed.
     var maxBlock = 100_000
 
     /// Fenced code and display math, the only constructs that span lines, as found in the current text.
     private var blocks: [NSRange] = []
-    /// Starts of the lines that contain "```", "~~~" or "$": only an edit on such a line can move a block.
-    private var triggers: [Int] = []
+    /// Where the delimiters of blocks are in the current text.
+    private var marks = Marks()
     private var highlightedLength: Int?
     /// The styled part of the text, whole lines.
     private(set) var window = NSRange(location: 0, length: 0)
     /// What the editor shows; the window follows it.
     private var visible = NSRange(location: 0, length: 0)
+    var visibleRange: NSRange { visible }
 
     /// Forgets the text: the next `highlight` styles a new document.
     func reset(keepingVisible: Bool = false) {
@@ -445,12 +558,150 @@ final class MarkdownHighlighter {
         if !keepingVisible { visible = NSRange(location: 0, length: 0) }
     }
 
-    private func multilineBlocks(in text: String, length: Int) -> [NSRange] {
-        let all = NSRange(location: 0, length: length)
+    /// Delimiters of fenced code and display math, found in one pass over the text: regular expressions and literal
+    /// searches over a note of hundreds of thousands of lines take most of a second.
+    struct Marks: Equatable {
+        /// Starts of the lines ("\n" ends a line) that contain "```", "~~~" or "$": only an edit on such a line can
+        /// move a block.
+        var lines: [Int] = []
+        /// Where a fence may open or close: a line start followed by blanks and three or more "`" or "~".
+        var fences: [Int] = []
+        /// Every "$".
+        var dollars: [Int] = []
+    }
+
+    /// Line terminators for "^" and "$" of the patterns (multiline ICU).
+    private static func isTerminator(_ c: unichar) -> Bool {
+        c == 10 || c == 13 || c == 0x85 || c == 0x2028 || c == 0x2029
+    }
+
+    /// The marks within `range`, which starts at the start of a line.
+    static func marks(in ns: NSString, range: NSRange) -> Marks {
+        var m = Marks()
+        var buffer = [unichar](repeating: 0, count: 65_536)
+        var lineStart = range.location
+        // Where the current line's leading blanks start, while only blanks follow a line terminator.
+        var lead: Int? = range.location
+        var run: unichar = 0, runLength = 0, runEnd = -1
+        var runLead: Int?
+        func addLine() { if m.lines.last != lineStart { m.lines.append(lineStart) } }
+        var p = range.location
+        let end = NSMaxRange(range)
+        while p < end {
+            let n = min(buffer.count, end - p)
+            ns.getCharacters(&buffer, range: NSRange(location: p, length: n))
+            for k in 0..<n {
+                let c = buffer[k], i = p + k
+                switch c {
+                case 96, 126: // ` ~
+                    if c == run && i == runEnd {
+                        runLength += 1
+                    } else {
+                        run = c
+                        runLength = 1
+                        runLead = lead
+                    }
+                    runEnd = i + 1
+                    if runLength == 3 {
+                        addLine()
+                        if let runLead { m.fences.append(runLead) }
+                    }
+                    lead = nil
+                case 36: // $
+                    m.dollars.append(i)
+                    addLine()
+                    lead = nil
+                case 10:
+                    lineStart = i + 1
+                    lead = i + 1
+                case 32, 9:
+                    break
+                default:
+                    lead = isTerminator(c) ? i + 1 : nil
+                }
+            }
+            p += n
+        }
+        return m
+    }
+
+    /// Fenced code as the `fence` pattern finds it, from the fence marks.
+    private static func fenceBlocks(_ ns: NSString, _ fences: [Int]) -> [NSRange] {
+        let length = ns.length
+        func skipBlanks(_ p: Int) -> Int {
+            var p = p
+            while p < length, ns.character(at: p) == 32 || ns.character(at: p) == 9 { p += 1 }
+            return p
+        }
+        /// End of the closing line at `q` (before its terminator) if it closes a fence of `d`.
+        func close(_ q: Int, _ d: unichar) -> Int? {
+            let p = skipBlanks(q)
+            guard p + 3 <= length, (0..<3).allSatisfy({ ns.character(at: p + $0) == d }) else { return nil }
+            let e = skipBlanks(p + 3)
+            return e == length || isTerminator(ns.character(at: e)) ? e : nil
+        }
+        var result: [NSRange] = []
+        var cursor = 0
+        var i = 0
+        while i < fences.count {
+            let s = fences[i]
+            i += 1
+            guard s >= cursor else { continue }
+            let p = skipBlanks(s)
+            let d = ns.character(at: p)
+            let newline = ns.range(of: "\n", options: .literal, range: NSRange(location: p + 3, length: length - p - 3))
+            guard newline.location != NSNotFound else { break }
+            var end = length
+            var j = lowerBound(fences, NSMaxRange(newline))
+            while j < fences.count {
+                if let e = close(fences[j], d) {
+                    end = e
+                    break
+                }
+                j += 1
+            }
+            result.append(NSRange(location: s, length: end - s))
+            cursor = end
+        }
+        return result
+    }
+
+    /// Display math spanning lines as the `math` pattern finds it, tried only where a "$" is.
+    private func mathBlocks(_ text: String, _ ns: NSString, _ dollars: [Int]) -> [NSRange] {
+        let length = ns.length
+        var result: [NSRange] = []
+        var i = 0
+        while i < dollars.count {
+            let p = dollars[i]
+            guard let m = math.firstMatch(in: text, options: [.anchored, .withTransparentBounds],
+                                          range: NSRange(location: p, length: length - p)) else {
+                i += 1
+                continue
+            }
+            if ns.rangeOfCharacter(from: .newlines, range: m.range).location != NSNotFound { result.append(m.range) }
+            i = Self.lowerBound(dollars, NSMaxRange(m.range))
+        }
+        return result
+    }
+
+    private func multilineBlocks(in text: String, _ ns: NSString) -> [NSRange] {
+        (Self.fenceBlocks(ns, marks.fences) + mathBlocks(text, ns, marks.dollars)).sorted { $0.location < $1.location }
+    }
+
+    /// The same blocks found with the patterns over the whole text, for tests.
+    func referenceBlocks(in text: String) -> [NSRange] {
         let ns = text as NSString
+        let all = NSRange(location: 0, length: ns.length)
         let spanning = math.matches(in: text, range: all).map(\.range)
             .filter { ns.rangeOfCharacter(from: .newlines, range: $0).location != NSNotFound }
         return (fence.matches(in: text, range: all).map(\.range) + spanning).sorted { $0.location < $1.location }
+    }
+
+    /// Blocks found from the marks, for tests.
+    func scannedBlocks(in text: String) -> [NSRange] {
+        let ns = text as NSString
+        marks = Self.marks(in: ns, range: NSRange(location: 0, length: ns.length))
+        return multilineBlocks(in: text, ns)
     }
 
     /// Whole lines around `range`. Only "\n" ends a line, as in the patterns: `[^\n]` runs through "\r" and U+2028,
@@ -465,24 +716,6 @@ final class MarkdownHighlighter {
         return NSRange(location: start, length: end - start)
     }
 
-    /// Starts of the lines within `range` (whole lines) that contain a block delimiter.
-    private static func triggerLines(in ns: NSString, range: NSRange) -> [Int] {
-        var starts = Set<Int>()
-        for needle in ["```", "~~~", "$"] {
-            var search = range
-            while search.length > 0 {
-                let r = ns.range(of: needle, options: .literal, range: search)
-                guard r.location != NSNotFound else { break }
-                let line = lines(around: NSRange(location: r.location, length: 0), in: ns)
-                starts.insert(line.location)
-                let next = NSMaxRange(line)
-                guard next < NSMaxRange(search) else { break }
-                search = NSRange(location: next, length: NSMaxRange(search) - next)
-            }
-        }
-        return starts.sorted()
-    }
-
     private static func lowerBound(_ a: [Int], _ value: Int) -> Int {
         var lo = 0, hi = a.count
         while lo < hi {
@@ -492,15 +725,21 @@ final class MarkdownHighlighter {
         return lo
     }
 
-    /// Updates the delimiter lines for an edit that replaced the old version of `lines` (whole lines, new
-    /// coordinates). Returns whether a delimiter line was removed, added or changed.
-    private func updateTriggers(_ lines: NSRange, delta: Int, _ ns: NSString) -> Bool {
-        let lo = Self.lowerBound(triggers, lines.location)
-        let hi = max(lo, Self.lowerBound(triggers, NSMaxRange(lines) - delta))
-        let fresh = Self.triggerLines(in: ns, range: lines)
-        for i in hi..<triggers.count { triggers[i] += delta }
-        triggers.replaceSubrange(lo..<hi, with: fresh)
-        return hi > lo || !fresh.isEmpty
+    /// Updates the marks for an edit that replaced the old version of `lines` (whole lines, new coordinates).
+    /// Returns whether a delimiter line was removed, added or changed.
+    private func updateMarks(_ lines: NSRange, delta: Int, _ ns: NSString) -> Bool {
+        let fresh = Self.marks(in: ns, range: lines)
+        let oldEnd = NSMaxRange(lines) - delta
+        func update(_ a: inout [Int], _ new: [Int]) -> Bool {
+            let lo = Self.lowerBound(a, lines.location)
+            let hi = max(lo, Self.lowerBound(a, oldEnd))
+            for i in hi..<a.count { a[i] += delta }
+            a.replaceSubrange(lo..<hi, with: new)
+            return hi > lo || !new.isEmpty
+        }
+        _ = update(&marks.fences, fresh.fences)
+        _ = update(&marks.dollars, fresh.dollars)
+        return update(&marks.lines, fresh.lines)
     }
 
     /// Where the blocks are after an edit that touched no delimiter line: none starts or ends in the edited lines.
@@ -563,8 +802,8 @@ final class MarkdownHighlighter {
         let length = ns.length
         let all = NSRange(location: 0, length: length)
         guard let edited, let previous = highlightedLength else {
-            triggers = Self.triggerLines(in: ns, range: all)
-            blocks = multilineBlocks(in: storage.string, length: length)
+            marks = Self.marks(in: ns, range: all)
+            blocks = multilineBlocks(in: storage.string, ns)
             highlightedLength = length
             window = target(ns)
             if NSMaxRange(window) < length || window.location > 0 { storage.setAttributes(baseAttributes, range: all) }
@@ -577,8 +816,8 @@ final class MarkdownHighlighter {
         // One character more: an inserted line break starts a new line after the edit.
         let lines = Self.lines(around: NSRange(location: location, length: min(clamped.length + 1, length - location)), in: ns)
         let moved = shifted(lines, delta: delta, oldLength: previous, newLength: length)
-        let changed = updateTriggers(lines, delta: delta, ns)
-        let found = changed ? multilineBlocks(in: storage.string, length: length) : moved
+        let changed = updateMarks(lines, delta: delta, ns)
+        let found = changed ? multilineBlocks(in: storage.string, ns) : moved
         // A block that starts or ends on an edited line is another block, even where it lines up with an old one.
         let oldLines = NSRange(location: lines.location, length: max(0, lines.length - delta))
         let restructured = found != moved || changed && (Self.bounded(blocks, in: oldLines) || Self.bounded(found, in: lines))

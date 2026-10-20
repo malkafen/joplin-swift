@@ -329,6 +329,13 @@ public final class Store {
         }
     }
 
+    /// The note and the version of its body, from one read.
+    public func noteAndStamp(id: String) -> (note: Note, stamp: BodyStamp)? {
+        guard let row = row(.note, id: id) else { return nil }
+        let note = Note(row: row)
+        return (note, BodyStamp(updatedTime: row.int("updated_time"), body: note.body))
+    }
+
     public func bodyStamp(id: String) -> BodyStamp? {
         guard let row = try? db.query("SELECT updated_time, octet_length(body) AS size FROM notes WHERE id = ?", [id]).first
         else { return nil }

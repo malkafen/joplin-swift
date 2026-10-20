@@ -76,6 +76,25 @@ struct SplitMix: RandomNumberGenerator {
     }
 
     /// Refreshing only around an edit must give exactly what highlighting the whole text gives.
+    /// The blocks found from one pass over the text are those the patterns find.
+    @Test func scannedBlocksMatchThePatterns() {
+        var rng = SplitMix(state: UInt64(ProcessInfo.processInfo.environment["JN_FUZZ_SEED"] ?? "") ?? 1)
+        let iterations = Int(ProcessInfo.processInfo.environment["JN_FUZZ_N"] ?? "") ?? 300
+        let extra = ["~~~", "  ```", "\r", "\u{2028}", "````", "$$\n", "\n```\n", " $", "a$", "$b"]
+        for _ in 0..<iterations * 3 {
+            var text = (0..<3).map { _ in Self.seeds.randomElement(using: &rng)! }.joined(separator: "\n")
+            for _ in 0..<Int.random(in: 0...8, using: &rng) {
+                let piece = (Bool.random(using: &rng) ? extra : Self.noise).randomElement(using: &rng)!
+                var chars = Array(text)
+                chars.insert(contentsOf: piece, at: Int.random(in: 0...chars.count, using: &rng))
+                text = String(chars)
+            }
+            text = Self.mutate(text, &rng)
+            let h = MarkdownHighlighter()
+            #expect(h.scannedBlocks(in: text) == h.referenceBlocks(in: text), "\(text.debugDescription)")
+        }
+    }
+
     @Test func incrementalHighlightMatchesFullHighlight() {
         var rng = SplitMix(state: UInt64(ProcessInfo.processInfo.environment["JN_FUZZ_SEED"] ?? "") ?? 1)
         let iterations = Int(ProcessInfo.processInfo.environment["JN_FUZZ_N"] ?? "") ?? 300
@@ -165,7 +184,7 @@ struct SplitMix: RandomNumberGenerator {
         _ = NSApplication.shared
         var rng = SplitMix(state: UInt64(ProcessInfo.processInfo.environment["JN_FUZZ_SEED"] ?? "") ?? 1)
         let iterations = Int(ProcessInfo.processInfo.environment["JN_FUZZ_N"] ?? "") ?? 300
-        let keys = Array("hjklwbeWBE0^$gGfFtT;,{}dcy><~xXDCYsSrJpPoOiaIAu/?nN*#:v V123\u{1B}\u{12}\u{04}\u{15}\r\u{7F}x é")
+        let keys = Array("hjklwbeWBE0^$gGfFtT;,{}+-oOiaIAn123\u{1B}\u{04}\u{15}\r\u{7F}x é")
         for _ in 0..<max(1, iterations / 10) {
             let tv = MarkdownTextView(frame: NSRect(x: 0, y: 0, width: 300, height: 200))
             tv.allowsUndo = true

@@ -578,35 +578,31 @@ struct NoteEditorView: View {
         .padding(.bottom, 10)
     }
 
-    @ViewBuilder
     private func content(_ note: NoteInfo, inTrash: Bool) -> some View {
-        switch model.layout {
-        case .editor:
-            editorPane(note, inTrash: inTrash)
-        case .preview:
-            previewPane(note)
-        case .split:
-            HSplitView {
-                editorPane(note, inTrash: inTrash).frame(minWidth: 220)
-                previewPane(note).frame(minWidth: 220)
-            }
-        }
+        NoteSplitView(layout: model.layout,
+                      editor: EditorPane(noteId: note.id, inTrash: inTrash).environment(model),
+                      preview: PreviewPane(noteId: note.id).environment(model))
     }
+}
 
-    private func editorPane(_ note: NoteInfo, inTrash: Bool) -> some View {
+/// The source editor of the current note. Its own view: it reads the body, which the editor changes on every keystroke.
+private struct EditorPane: View {
+    @Environment(AppModel.self) private var model
+    var noteId: String
+    var inTrash: Bool
+
+    var body: some View {
         MarkdownEditor(
             text: model.currentNote?.body ?? "",
-            noteId: note.id,
+            noteId: noteId,
             typography: model.editorTypography,
             readableWidth: model.readableWidth,
             highlights: model.searchTerms,
             vimMode: model.vimMode,
             onVimMode: { model.vimState = $0 },
-            // Reported after the update: loading a note clears the line while SwiftUI is updating the view.
-            onVimCommandLine: { line in Task { model.vimCommandLine = line } },
             isEditable: !inTrash,
             bridge: model.editor,
-            onChange: { model.updateBody($0) },
+            onChange: { model.editBody($0) },
             onDropFiles: { model.attachmentMarkdown(for: $0) },
             onPasteImage: { model.pastedImageMarkdown($0) }
         )
@@ -623,26 +619,21 @@ struct NoteEditorView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay(alignment: .bottomLeading) {
-            if model.vimMode, !model.vimCommandLine.isEmpty {
-                Text(model.vimCommandLine)
-                    .font(.system(size: 11, design: .monospaced))
-                    .foregroundStyle(VimEngine.isError(model.vimCommandLine) ? AnyShapeStyle(.red) : AnyShapeStyle(.primary))
-                    .lineLimit(1)
-                    .truncationMode(.head)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5, style: .continuous))
-                    .padding(10)
-                    .padding(.trailing, 90)
-                    .allowsHitTesting(false)
-            }
-        }
     }
+}
 
-    private func previewPane(_ note: NoteInfo) -> some View {
-        MarkdownPreview(markdown: model.currentNote?.body ?? "", noteId: note.id, renderer: model.renderer,
-                        readableWidth: model.readableWidth, highlights: model.searchTerms, onLink: { model.handleLink($0) })
+/// The rendered current note; follows the editor through `bodyRevision`.
+private struct PreviewPane: View {
+    @Environment(AppModel.self) private var model
+    var noteId: String
+
+    var body: some View {
+        // Collapsed, it renders once shown: typing need not update it.
+        let shown = model.layout != .editor
+        let _ = shown ? model.bodyRevision : 0
+        MarkdownPreview(markdown: model.currentNote?.body ?? "", noteId: noteId, renderer: model.renderer,
+                        isShown: shown, readableWidth: model.readableWidth,
+                        highlights: model.searchTerms, onLink: { model.handleLink($0) })
     }
 }
 
