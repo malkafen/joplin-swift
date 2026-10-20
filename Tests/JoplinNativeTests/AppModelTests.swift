@@ -188,6 +188,22 @@ import Testing
         #expect(model.currentNote?.id == model.notes[1].id)
     }
 
+    @Test func reloadingReadsTheBodyOnlyWhenItChanged() throws {
+        let h = try ModelHarness()
+        let model = h.model
+        let id = try #require(model.currentNote?.id)
+        model.updateBody("mine")
+        model.flushSave()
+        // Same time and size: the body in memory is taken to be current (a real change moves `updated_time`).
+        try h.store.db.run("UPDATE notes SET body = 'MINE', title = 'retitled' WHERE id = ?", [id])
+        model.reloadNotes(selectFirst: false)
+        #expect(model.currentNote?.body == "mine")
+        #expect(model.currentNote?.title == "retitled")
+        try h.store.db.run("UPDATE notes SET body = 'theirs', updated_time = updated_time + 1 WHERE id = ?", [id])
+        model.reloadNotes(selectFirst: false)
+        #expect(model.currentNote?.body == "theirs")
+    }
+
     @Test func externallyDeletedNoteDisappears() throws {
         let h = try ModelHarness()
         let model = h.model

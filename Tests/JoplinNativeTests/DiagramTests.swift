@@ -319,6 +319,24 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(found.first { $0.title == "needle in title" }?.snippet == "body")
     }
 
+    @Test func longNotesAreExcerptedAroundTheMatch() throws {
+        let store = try Store(directory: temporaryDirectory())
+        let filler = String(repeating: "lorem ipsum dolor sit amet\n", count: 3_000)
+        try store.createNote(parentId: "", title: "Case", body: filler + "The Needle is here " + filler)
+        try store.createNote(parentId: "", title: "Accent", body: filler + "un café noir " + filler)
+        try store.createNote(parentId: "", title: "Start", body: "needle first " + filler)
+        func snippet(_ search: String, _ title: String) -> String? {
+            store.notes(filter: .search(search), sort: .title).first { $0.title == title }?.snippet
+        }
+        let found = try #require(snippet("needle", "Case"))
+        #expect(found.hasPrefix("…") && found.hasSuffix("…") && found.contains("The Needle is here"))
+        #expect(found.count < 500)
+        #expect(snippet("NEEDLE", "Case")?.contains("The Needle") == true)
+        // Not one of the spellings SQLite looks for: found in the text itself, like the index does.
+        #expect(snippet("cafe", "Accent")?.contains("café noir") == true)
+        #expect(snippet("needle", "Start")?.hasPrefix("needle first") == true)
+    }
+
     @Test func modelHighlightsAndFindPasteboard() throws {
         let h = try ModelHarness()
         let model = h.model

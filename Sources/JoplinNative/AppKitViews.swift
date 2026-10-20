@@ -7,10 +7,17 @@ final class RemoteImageLoader {
     static let shared = RemoteImageLoader()
     static let didLoad = Notification.Name("JNRemoteImageLoaded")
 
-    private let cache = NSCache<NSURL, NSImage>()
+    nonisolated(unsafe) private let cache = NSCache<NSURL, NSImage>()
     private var inFlight: Set<URL> = []
     private var failed: Set<URL> = []
     var session: URLSession = .shared
+
+    /// `image(for:)` for renders off the main thread: the download, if needed, starts on the main thread.
+    nonisolated func imageOffMain(for url: URL) -> NSImage? {
+        if let image = cache.object(forKey: url as NSURL) { return image }
+        DispatchQueue.main.async { MainActor.assumeIsolated { _ = self.image(for: url) } }
+        return nil
+    }
 
     /// The image when it has been downloaded; otherwise starts the download and returns nil.
     func image(for url: URL) -> NSImage? {
@@ -158,12 +165,23 @@ final class PreviewTextView: NSTextView, ReadableWidth {
 
 /// Read-only rendered note (TextKit 1, needed for NSTextTable / NSTextBlock).
 struct MarkdownPreview: NSViewRepresentable {
-    var markdown: String
+    private let box: TextBox
+    var markdown: String { box.string }
     var noteId: String
     var renderer: MarkdownRenderer
     var readableWidth: Bool
     var highlights: [String] = []
     var onLink: (URL) -> Void
+
+    init(markdown: String, noteId: String, renderer: MarkdownRenderer, readableWidth: Bool, highlights: [String] = [],
+         onLink: @escaping (URL) -> Void) {
+        box = TextBox(markdown)
+        self.noteId = noteId
+        self.renderer = renderer
+        self.readableWidth = readableWidth
+        self.highlights = highlights
+        self.onLink = onLink
+    }
 
     func makeCoordinator() -> Coordinator { Coordinator(onLink: onLink) }
 
@@ -206,7 +224,7 @@ struct MarkdownPreview: NSViewRepresentable {
         guard let tv = c.textView else { return }
         tv.maxLineWidth = readableWidth ? renderer.typography.readableWidth : nil
         let style = "\(renderer.typography)|\(renderer.loadsRemoteImages)|\(highlights)"
-        guard c.renderedStyle != style || c.markdown != markdown || c.noteId != noteId else { return }
+        guard c.renderedStyle != style || !c.markdown.isLiterally(markdown) || c.noteId != noteId else { return }
         let sameNote = c.noteId == noteId
         let newTerms = c.highlights != highlights
         let typing = sameNote && c.renderedStyle == style
@@ -218,9 +236,7 @@ struct MarkdownPreview: NSViewRepresentable {
             c.renderSoon()
             return
         }
-        c.render(keepScroll: sameNote)
-        if !sameNote { tv.scrollToBeginningOfDocument(nil) }
-        if !sameNote || newTerms { c.revealFirstMatch() }
+        c.render(keepScroll: sameNote, reveal: !sameNote || newTerms)
     }
 
     static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
@@ -265,7 +281,7 @@ struct MarkdownPreview: NSViewRepresentable {
 
         /// Images are sized to the text width: re-render when it changes noticeably.
         func widthChanged() {
-            guard renderer != nil, abs(imageWidth - renderedWidth) > 24 else { return }
+            guard renderer != nil, sizedToWidth, abs(imageWidth - renderedWidth) > 24 else { return }
             DispatchQueue.main.async { [weak self] in self?.render(keepScroll: true) }
         }
 
@@ -282,20 +298,97 @@ struct MarkdownPreview: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
         }
 
-        func render(keepScroll: Bool) {
+        /// Notes longer than this (in UTF-16 units) render off the main thread, their start shown meanwhile:
+        /// rendering a huge note takes seconds.
+        static let backgroundLength = 200_000
+        private var sizedToWidth = true
+        private var generation = 0
+        /// A render off the main thread is running; asked again meanwhile, the latest text renders when it is done
+        /// (revealing the first match if any request wanted that).
+        private var rendering = false
+        private var renderAgain: Bool?
+        private let renderQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.preview", qos: .userInitiated)
+
+        private struct Rendered: @unchecked Sendable {
+            var text: NSAttributedString
+            var firstMatch: NSRange?
+            var sizedToWidth: Bool
+        }
+
+        private static func rendered(_ markdown: String, _ renderer: MarkdownRenderer, width: CGFloat, highlights: [String]) -> Rendered {
+            let document = renderer.renderDocument(markdown, maxImageWidth: width)
+            let text = document.text as? NSMutableAttributedString ?? NSMutableAttributedString(attributedString: document.text)
+            let match = SearchHighlight.apply(highlights, to: text)
+            return Rendered(text: text, firstMatch: match, sizedToWidth: document.sizedToWidth)
+        }
+
+        /// The first paragraphs of a long note.
+        static func start(of markdown: String) -> String {
+            let ns = markdown as NSString
+            let limit = min(ns.length, 20_000)
+            let cut = ns.range(of: "\n\n", options: .backwards, range: NSRange(location: 0, length: limit)).location
+            return ns.substring(to: cut == NSNotFound ? limit : cut)
+        }
+
+        func render(keepScroll: Bool, reveal: Bool = false) {
             pendingRender?.cancel()
             pendingRender = nil
-            defer { lastRender = Date() }
-            guard let tv = textView, let renderer, let scroll = tv.enclosingScrollView else { return }
-            let origin = scroll.contentView.bounds.origin
+            guard textView != nil, var renderer else { return }
+            generation += 1
             renderedWidth = imageWidth
-            let text = NSMutableAttributedString(attributedString: renderer.render(markdown, maxImageWidth: renderedWidth))
-            firstMatch = SearchHighlight.apply(highlights, to: text)
-            tv.textStorage?.setAttributedString(text)
-            if keepScroll {
+            let markdown = self.markdown, highlights = self.highlights, width = renderedWidth
+            guard (markdown as NSString).length > Self.backgroundLength else {
+                show(Self.rendered(markdown, renderer, width: width, highlights: highlights), keepScroll: keepScroll, reveal: reveal)
+                return
+            }
+            if !keepScroll {
+                show(Self.rendered(Self.start(of: markdown), renderer, width: width, highlights: highlights), keepScroll: false, reveal: false)
+            }
+            guard !rendering else {
+                renderAgain = (renderAgain ?? false) || reveal
+                return
+            }
+            rendering = true
+            if renderer.remoteImage != nil {
+                let loader = RemoteImageLoader.shared
+                renderer.remoteImage = { loader.imageOffMain(for: $0) }
+            }
+            nonisolated(unsafe) let background = renderer
+            let token = generation
+            renderQueue.async { [weak self] in
+                let result = Self.rendered(markdown, background, width: width, highlights: highlights)
+                RunLoop.main.perform(inModes: [.common]) {
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.rendering = false
+                        if self.generation == token { self.show(result, keepScroll: true, reveal: reveal) }
+                        if let again = self.renderAgain {
+                            self.renderAgain = nil
+                            self.render(keepScroll: true, reveal: again)
+                        }
+                    }
+                }
+            }
+        }
+
+        private func show(_ result: Rendered, keepScroll: Bool, reveal: Bool) {
+            defer { lastRender = Date() }
+            guard let tv = textView, let lm = tv.layoutManager else { return }
+            let scroll = tv.enclosingScrollView
+            let origin = scroll?.contentView.bounds.origin ?? .zero
+            firstMatch = result.firstMatch
+            sizedToWidth = result.sizedToWidth
+            // A new storage: replacing the text of the current one copies the attribute runs one by one, which takes
+            // minutes for a huge note. Laid out only where shown, for the same reason.
+            lm.allowsNonContiguousLayout = result.text.length > Self.backgroundLength
+            lm.replaceTextStorage(NSTextStorage(attributedString: result.text))
+            if keepScroll, let scroll {
                 scroll.contentView.scroll(to: origin)
                 scroll.reflectScrolledClipView(scroll.contentView)
+            } else if !keepScroll {
+                tv.scrollToBeginningOfDocument(nil)
             }
+            if reveal { revealFirstMatch() }
         }
 
         /// Scrolls the first search match into the middle of the view.

@@ -50,7 +50,9 @@ final class VimEngine {
     private var redoCursors: [Int] = []
     private var changeStart: Int?
     private var insertStart: Int?
-    private var insertTextHash = 0
+    /// Counts text changes, to tell whether an insert changed anything (hashing a huge note is slow).
+    private var edits = 0
+    private var insertEdits = 0
 
     struct Search: Equatable {
         var pattern: String
@@ -122,24 +124,57 @@ final class VimEngine {
 
     private func column(_ i: Int) -> Int { i - lineStart(i) }
 
+    /// Calls `body` with the index of each newline from the start of the text until it returns false.
+    /// Reads the text in chunks: per-character access is far too slow for notes of hundreds of thousands of lines.
+    private func forEachNewline(before end: Int, _ body: (Int) -> Bool) {
+        let ns = text
+        let end = min(end, ns.length)
+        var buffer = [unichar](repeating: 0, count: 65_536)
+        var p = 0
+        while p < end {
+            let n = min(buffer.count, end - p)
+            ns.getCharacters(&buffer, range: NSRange(location: p, length: n))
+            for k in 0..<n where buffer[k] == 10 {
+                if !body(p + k) { return }
+            }
+            p += n
+        }
+    }
+
     private func lineNumber(_ i: Int) -> Int {
         var n = 0
-        var p = 0
-        while p < min(i, length) {
-            if isNewline(p) { n += 1 }
-            p += 1
-        }
+        forEachNewline(before: i) { _ in n += 1; return true }
         return n
     }
 
     private func startOfLine(number: Int) -> Int {
-        var n = 0
-        var p = 0
-        while n < number, p < length {
-            if isNewline(p) { n += 1 }
-            p += 1
+        guard number > 0 else { return 0 }
+        var n = 0, start = length
+        forEachNewline(before: length) { i in
+            n += 1
+            if n == number { start = i + 1 }
+            return n < number
         }
-        return p
+        return start
+    }
+
+    /// Start of the line `count` lines below (or above) the one at `i`, stopping at the last (first) line;
+    /// nil when already there.
+    private func lineStart(_ i: Int, movingBy count: Int, down: Bool) -> Int? {
+        var s = lineStart(i)
+        var moved = 0
+        while moved < count {
+            if down {
+                let e = lineEnd(s)
+                guard e < length else { break }
+                s = e + 1
+            } else {
+                guard s > 0 else { break }
+                s = lineStart(s - 1)
+            }
+            moved += 1
+        }
+        return moved > 0 ? s : nil
     }
 
     /// Shows the cursor: in normal mode the character under it is selected as a block.
@@ -297,7 +332,7 @@ final class VimEngine {
         }
         if mode == .insert, !wasInsert, insertStart == nil {
             insertStart = cursor
-            insertTextHash = textView?.string.hashValue ?? 0
+            insertEdits = edits
         }
         return handled
     }
@@ -317,7 +352,7 @@ final class VimEngine {
                 let p = cursor
                 // Typing in insert mode is one change for undo.
                 if let start = insertStart {
-                    if textView?.string.hashValue != insertTextHash { undoCursors.append(start) }
+                    if edits != insertEdits { undoCursors.append(start) }
                     insertStart = nil
                     redoCursors = []
                 }
@@ -535,11 +570,8 @@ final class VimEngine {
         case "j", "k", "+", "-":
             let down = key == "j" || key == "+"
             let col = desiredColumn ?? column(p)
-            let current = lineNumber(p), last = lineNumber(length)
             // Moving past the first or last line stops there; already there, it is an error.
-            guard down ? current < last : current > 0 else { return nil }
-            let line = min(max(current + (down ? count : -count), 0), last)
-            let s = startOfLine(number: line)
+            guard let s = lineStart(p, movingBy: count, down: down) else { return nil }
             let firstColumn = key == "+" || key == "-"
             desiredColumn = firstColumn ? nil : col
             return (firstColumn ? firstNonBlank(s) : min(s + col, lastCursorPosition(s)), true, true)
@@ -1008,6 +1040,7 @@ final class VimEngine {
     }
 
     private func textDidChange() {
+        edits &+= 1
         if highlighting, prompt == nil { refreshHighlights() }
     }
 
@@ -1023,10 +1056,56 @@ final class VimEngine {
     /// Highlights are temporary layout attributes: they do not touch the note text, its undo or its styling.
     private func showHighlights(_ ranges: [NSRange], current: NSRange?) {
         highlightedRanges = ranges
-        guard let lm = textView?.layoutManager else { return }
-        lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: NSRange(location: 0, length: length))
-        for r in ranges { lm.addTemporaryAttribute(.backgroundColor, value: SearchHighlight.color, forCharacterRange: r) }
-        if let current { lm.addTemporaryAttribute(.backgroundColor, value: Self.currentMatchColor, forCharacterRange: current) }
+        currentHighlight = current
+        paintHighlights()
+    }
+
+    /// Highlights are painted within this many characters around the visible text: changing temporary attributes
+    /// makes AppKit lay out the text they cover, which takes seconds across a huge note.
+    var paintMargin = 50_000
+    private var currentHighlight: NSRange?
+    /// Where highlights may be painted, and the text length then: edits since move them by at most the change.
+    private var painted: (span: NSRange, length: Int)?
+
+    private func paintHighlights() {
+        guard let tv = textView, let lm = tv.layoutManager else { return }
+        let length = self.length
+        if let painted {
+            let grow = max(0, length - painted.length), shrink = max(0, painted.length - length)
+            let lo = max(0, painted.span.location - shrink), hi = min(length, NSMaxRange(painted.span) + grow)
+            if hi > lo { lm.removeTemporaryAttribute(.backgroundColor, forCharacterRange: NSRange(location: lo, length: hi - lo)) }
+            self.painted = nil
+        }
+        guard !highlightedRanges.isEmpty || currentHighlight != nil else { return }
+        let visible = visibleCharacters(tv)
+        let lo = max(0, visible.location - paintMargin), hi = min(length, NSMaxRange(visible) + paintMargin)
+        let span = NSRange(location: lo, length: hi - lo)
+        for r in highlightedRanges where NSIntersectionRange(r, span).length > 0 && NSMaxRange(r) <= length {
+            lm.addTemporaryAttribute(.backgroundColor, value: SearchHighlight.color, forCharacterRange: r)
+        }
+        if let current = currentHighlight, NSMaxRange(current) <= length {
+            lm.addTemporaryAttribute(.backgroundColor, value: Self.currentMatchColor, forCharacterRange: current)
+        }
+        painted = (NSUnionRange(span, currentHighlight.map { NSIntersectionRange($0, NSRange(location: 0, length: length)) } ?? span), length)
+    }
+
+    private func visibleCharacters(_ tv: NSTextView) -> NSRange {
+        guard let lm = tv.layoutManager, let container = tv.textContainer else { return NSRange(location: 0, length: 0) }
+        var rect = tv.visibleRect
+        rect.origin.x -= tv.textContainerOrigin.x
+        rect.origin.y -= tv.textContainerOrigin.y
+        return lm.characterRange(forGlyphRange: lm.glyphRange(forBoundingRect: rect, in: container), actualGlyphRange: nil)
+    }
+
+    /// The editor scrolled: paints the highlights that came near the visible text.
+    func viewportChanged() {
+        guard let tv = textView, let painted, painted.length == length else { return }
+        let visible = visibleCharacters(tv)
+        let margin = paintMargin / 2
+        if visible.location - margin < painted.span.location && painted.span.location > 0
+            || NSMaxRange(visible) + margin > NSMaxRange(painted.span) && NSMaxRange(painted.span) < length {
+            paintHighlights()
+        }
     }
 
     /// Vim errors read "E486: …".

@@ -431,6 +431,27 @@ func longDate(_ ms: Int64) -> String {
 
 // MARK: - Editor
 
+/// The current note without its body.
+private struct NoteInfo: Equatable {
+    var id: String
+    var parentId: String
+    var isTodo: Bool
+    var todoCompleted: Int64
+    var deletedTime: Int64
+    var userCreatedTime: Int64
+    var userUpdatedTime: Int64
+
+    init(_ note: Note) {
+        id = note.id
+        parentId = note.parentId
+        isTodo = note.isTodo
+        todoCompleted = note.todoCompleted
+        deletedTime = note.deletedTime
+        userCreatedTime = note.userCreatedTime
+        userUpdatedTime = note.userUpdatedTime
+    }
+}
+
 struct NoteEditorView: View {
     @Environment(AppModel.self) private var model
     @FocusState private var titleFocused: Bool
@@ -438,7 +459,9 @@ struct NoteEditorView: View {
     var body: some View {
         @Bindable var model = model
         Group {
-            if let note = model.currentNote {
+            // Not `if let note`: SwiftUI compares the values views hold or capture, and comparing huge bodies on every
+            // keystroke is slow. The chrome gets the note without its body, the editor its body in a `TextBox`.
+            if let note = model.currentNote.map(NoteInfo.init) {
                 editor(note)
             } else if model.selectedNoteIDs.count > 1 {
                 ContentUnavailableView("\(model.selectedNoteIDs.count) Notes Selected", systemImage: "doc.on.doc")
@@ -479,7 +502,7 @@ struct NoteEditorView: View {
     }
 
     @ViewBuilder
-    private func editor(_ note: Note) -> some View {
+    private func editor(_ note: NoteInfo) -> some View {
         let inTrash = note.deletedTime > 0
         VStack(spacing: 0) {
             if inTrash {
@@ -499,7 +522,7 @@ struct NoteEditorView: View {
         }
     }
 
-    private func header(_ note: Note, inTrash: Bool) -> some View {
+    private func header(_ note: NoteInfo, inTrash: Bool) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
                 if note.isTodo {
@@ -556,7 +579,7 @@ struct NoteEditorView: View {
     }
 
     @ViewBuilder
-    private func content(_ note: Note, inTrash: Bool) -> some View {
+    private func content(_ note: NoteInfo, inTrash: Bool) -> some View {
         switch model.layout {
         case .editor:
             editorPane(note, inTrash: inTrash)
@@ -570,9 +593,9 @@ struct NoteEditorView: View {
         }
     }
 
-    private func editorPane(_ note: Note, inTrash: Bool) -> some View {
+    private func editorPane(_ note: NoteInfo, inTrash: Bool) -> some View {
         MarkdownEditor(
-            text: note.body,
+            text: model.currentNote?.body ?? "",
             noteId: note.id,
             typography: model.editorTypography,
             readableWidth: model.readableWidth,
@@ -617,8 +640,8 @@ struct NoteEditorView: View {
         }
     }
 
-    private func previewPane(_ note: Note) -> some View {
-        MarkdownPreview(markdown: note.body, noteId: note.id, renderer: model.renderer,
+    private func previewPane(_ note: NoteInfo) -> some View {
+        MarkdownPreview(markdown: model.currentNote?.body ?? "", noteId: note.id, renderer: model.renderer,
                         readableWidth: model.readableWidth, highlights: model.searchTerms, onLink: { model.handleLink($0) })
     }
 }

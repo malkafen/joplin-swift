@@ -204,12 +204,16 @@ public final class Store {
         if !showCompletedTodos { clauses.append("NOT (is_todo = 1 AND todo_completed > 0)") }
         clauses.append("encryption_applied = 0")
 
-        // Search results show the text around the first match instead of the start of the note.
+        // Search results show the text around the first match instead of the start of the note. snippet() tokenizes
+        // the whole note, which takes seconds for a huge one: those are left NULL and excerpted below.
         var snippet = "substr(body, 1, 400)"
+        var searchText: String?
         if case .search(let text) = filter, !Store.ftsQuery(text).isEmpty {
+            searchText = text
             snippet = """
+            CASE WHEN octet_length(body) > \(Store.longNote) THEN NULL ELSE
             COALESCE(NULLIF((SELECT snippet(notes_fts, 1, '', '', '…', 24) FROM notes_fts
-                             WHERE notes_fts MATCH ? AND notes_fts.rowid = notes.rowid), ''), substr(body, 1, 400))
+                             WHERE notes_fts MATCH ? AND notes_fts.rowid = notes.rowid), ''), substr(body, 1, 400)) END
             """
             args.insert(Store.ftsQuery(text), at: 0)
         }
@@ -226,7 +230,51 @@ public final class Store {
                \(snippet) AS snippet
         FROM notes WHERE \(clauses.joined(separator: " AND ")) ORDER BY \(order.joined(separator: ", "))
         """
-        return ((try? db.query(sql, args)) ?? []).map(NoteSummary.init(row:))
+        let rows = (try? db.query(sql, args)) ?? []
+        var summaries = rows.map(NoteSummary.init(row:))
+        if let searchText {
+            for (i, row) in rows.enumerated() where row["snippet"] is NSNull {
+                summaries[i].snippet = Snippet.make(from: excerpt(noteId: summaries[i].id, around: searchText))
+            }
+        }
+        return summaries
+    }
+
+    /// Notes longer than this (in UTF-8 bytes, which SQLite knows without reading the text) get their search snippet
+    /// from `excerpt`.
+    static let longNote = 50_000
+
+    /// The text around the first occurrence of a search word (ignoring case and diacritics, like the index).
+    func excerpt(noteId: String, around search: String) -> String {
+        let words = search.split(whereSeparator: { $0.isWhitespace })
+            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'*")) }
+            .filter { !$0.isEmpty }
+        // SQLite finds the usual spellings without turning the whole note into a string; any match will do.
+        var spellings: [String] = []
+        for w in words {
+            for s in [w, w.lowercased(), w.capitalized, w.uppercased()] where !spellings.contains(s) { spellings.append(s) }
+        }
+        for s in spellings {
+            guard let found = try? db.query("SELECT instr(body, ?) AS p FROM notes WHERE id = ?", [s, noteId]).first?.int("p"),
+                  found > 0 else { continue }
+            let start = max(1, found - 80)
+            guard let text = try? db.query("SELECT substr(body, ?, 401) AS t FROM notes WHERE id = ?", [start, noteId])
+                .first?.string("t") else { break }
+            let more = text.count > 400
+            return (start > 1 ? "…" : "") + (more ? String(text.prefix(400)) : text) + (more ? "…" : "")
+        }
+        // Other spellings (accents, mixed case) are looked for in the start of the note only.
+        guard let body = try? db.query("SELECT substr(body, 1, 200000) AS body FROM notes WHERE id = ?", [noteId])
+            .first?.string("body") else { return "" }
+        let ns = body as NSString
+        let first = words.map { ns.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) }
+            .filter { $0.location != NSNotFound }
+            .min { $0.location < $1.location }
+        guard let first else { return ns.substring(to: min(400, ns.length)) }
+        let start = ns.rangeOfComposedCharacterSequence(at: max(0, first.location - 80)).location
+        let end = min(ns.length, start + 400)
+        let text = ns.substring(with: ns.rangeOfComposedCharacterSequences(for: NSRange(location: start, length: end - start)))
+        return (start > 0 ? "…" : "") + text + (end < ns.length ? "…" : "")
     }
 
     static func ftsQuery(_ text: String) -> String {
@@ -261,8 +309,50 @@ public final class Store {
     }
 
     /// Saves user-editable fields and bumps the modification times.
-    public func saveNote(_ note: Note) throws {
-        let now = Store.now()
+    public func saveNote(_ note: Note, at time: Int64 = Store.now()) throws {
+        try Store.saveNote(note, in: db, at: time)
+    }
+
+    /// Which version of a note's body the database holds, found without reading the body.
+    public struct BodyStamp: Equatable, Sendable {
+        public var updatedTime: Int64
+        public var size: Int64
+
+        public init(updatedTime: Int64, body: String) {
+            self.updatedTime = updatedTime
+            size = Int64(body.utf8.count)
+        }
+
+        init(updatedTime: Int64, size: Int64) {
+            self.updatedTime = updatedTime
+            self.size = size
+        }
+    }
+
+    public func bodyStamp(id: String) -> BodyStamp? {
+        guard let row = try? db.query("SELECT updated_time, octet_length(body) AS size FROM notes WHERE id = ?", [id]).first
+        else { return nil }
+        return BodyStamp(updatedTime: row.int("updated_time"), size: row.int("size"))
+    }
+
+    /// The note with an empty body, read without it.
+    public func noteWithoutBody(id: String) -> Note? {
+        let sql = """
+            SELECT id, parent_id, title, '' AS body, is_todo, todo_completed, todo_due, source_url, author, markup_language,
+                   is_conflict, created_time, user_created_time, user_updated_time, deleted_time, encryption_applied
+            FROM notes WHERE id = ?
+            """
+        return (try? db.query(sql, [id]).first).map(Note.init(row:))
+    }
+
+    /// Another connection to the database, for saving off the main thread: with WAL the main connection keeps
+    /// reading meanwhile, and a write of its own waits for the other one (busy timeout).
+    public func makeWriter() throws -> SQLiteDB {
+        try SQLiteDB(path: directory.appendingPathComponent("database.sqlite").path)
+    }
+
+    /// `saveNote` on the given connection.
+    public static func saveNote(_ note: Note, in db: SQLiteDB, at now: Int64 = Store.now()) throws {
         let title = note.title.replacingOccurrences(of: "\n", with: " ")
         try db.run("""
             UPDATE notes SET title = ?, body = ?, is_todo = ?, todo_completed = ?, todo_due = ?, parent_id = ?, source_url = ?,
