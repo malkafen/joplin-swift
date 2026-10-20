@@ -1,40 +1,66 @@
 import AppKit
 
-/// Vim navigation for an `NSTextView`: normal and insert modes, counts, the motions h j k l w b e W B E 0 ^ $ gg G
-/// f F t T ; , { } + - ⌃D ⌃U, and i a I A o O to start typing. "/" and "?" open the system find bar, n and N go to
-/// the next and previous match. Editing is left to the text view. Normal mode shows the character under the cursor
-/// selected, which reads as a block cursor.
+/// Basic Vim for an `NSTextView`: normal, insert, visual and visual-line modes with counts, motions
+/// (h j k l w b e W B E 0 ^ $ gg G f F t T ; , { } + -), operators (d c y > < with motions, doubled for lines, and in
+/// visual mode), x X D C Y s S r J ~ p P o O i a I A u ⌃R. Yanked and deleted text goes to one unnamed register.
+/// Search is the system find bar (⌘F). Normal mode shows the character under the cursor selected, which reads as a
+/// block cursor.
 ///
 /// The text is read in place, around the cursor: copying a note of hundreds of thousands of lines per key is slow.
 @MainActor
 final class VimEngine {
     enum Mode: Equatable {
-        case normal, insert
+        case normal, insert, visual, visualLine
 
         var label: String {
             switch self {
             case .normal: return "NORMAL"
             case .insert: return "INSERT"
+            case .visual: return "VISUAL"
+            case .visualLine: return "VISUAL LINE"
             }
         }
     }
 
     weak var textView: NSTextView?
     var onModeChange: ((Mode) -> Void)?
-
     private(set) var mode: Mode = .normal {
-        didSet { if oldValue != mode { onModeChange?(mode) } }
+        didSet {
+            guard oldValue != mode else { return }
+            onModeChange?(mode)
+        }
     }
 
+    private(set) var register = ""
+    private(set) var registerLinewise = false
     private var pending = ""
     private var countText = ""
+    private var operatorCount = 1
+    private var anchor = 0
     private var desiredColumn: Int?
     private var lastFind: (key: Character, char: Character)?
-    /// The last search was typed after "?": n goes backwards.
-    private var searchBackwards = false
+    /// Where each undoable change started, so that "u" puts the cursor there as Vim does.
+    private var undoCursors: [Int] = []
+    private var redoCursors: [Int] = []
+    private var changeStart: Int?
+    private var insertStart: Int?
+    /// Counts text changes, to tell whether an insert changed anything (hashing a huge note is slow).
+    private var edits = 0
+    private var insertEdits = 0
+
+    nonisolated(unsafe) private var textObserver: NSObjectProtocol?
 
     init(textView: NSTextView? = nil) {
         self.textView = textView
+        // Counts changes, to tell whether an insert changed anything.
+        textObserver = NotificationCenter.default.addObserver(forName: NSText.didChangeNotification, object: textView,
+                                                              queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.textDidChange() }
+        }
+    }
+
+    deinit {
+        if let textObserver { NotificationCenter.default.removeObserver(textObserver) }
     }
 
     // MARK: Text helpers
@@ -42,7 +68,10 @@ final class VimEngine {
     private var text: NSString { textView?.textStorage?.mutableString ?? "" }
     private var length: Int { text.length }
 
-    private var cursor: Int { textView?.selectedRange().location ?? 0 }
+    private var cursor: Int {
+        get { textView?.selectedRange().location ?? 0 }
+        set { place(newValue) }
+    }
 
     private func char(_ i: Int) -> unichar? { i >= 0 && i < length ? text.character(at: i) : nil }
     private func isNewline(_ i: Int) -> Bool { char(i) == 10 }
@@ -115,18 +144,55 @@ final class VimEngine {
     private func place(_ i: Int) {
         guard let tv = textView else { return }
         let p = max(0, min(i, length))
-        let block = mode == .normal && p < length && !isNewline(p) ? 1 : 0
-        tv.setSelectedRange(NSRange(location: p, length: block))
+        switch mode {
+        case .insert:
+            tv.setSelectedRange(NSRange(location: p, length: 0))
+        case .normal:
+            let block = p < length && !isNewline(p) ? 1 : 0
+            tv.setSelectedRange(NSRange(location: p, length: block))
+        case .visual:
+            let lo = min(anchor, p), hi = max(anchor, p)
+            tv.setSelectedRange(NSRange(location: lo, length: min(hi + 1, length) - lo))
+            visualCursor = p
+            return
+        case .visualLine:
+            let lo = lineStart(min(anchor, p))
+            var hi = lineEnd(max(anchor, p))
+            if hi < length { hi += 1 }
+            tv.setSelectedRange(NSRange(location: lo, length: hi - lo))
+            visualCursor = p
+            return
+        }
         // Off-window, AppKit defers the scroll to a block that leaks if the view goes away before layout.
         if tv.window != nil { tv.scrollRangeToVisible(NSRange(location: p, length: 0)) }
+    }
+
+    /// Cursor end of a visual selection (the selection itself always starts at its lower end).
+    private var visualCursor = 0
+
+    private var position: Int { mode == .visual || mode == .visualLine ? visualCursor : cursor }
+
+    private func replace(_ range: NSRange, with string: String) {
+        guard let tv = textView, tv.isEditable else { return }
+        if changeStart == nil { changeStart = range.location }
+        if tv.shouldChangeText(in: range, replacementString: string) {
+            tv.textStorage?.replaceCharacters(in: range, with: string)
+            tv.didChangeText()
+        }
+    }
+
+    private func yank(_ range: NSRange, linewise: Bool) {
+        register = text.substring(with: range)
+        registerLinewise = linewise
     }
 
     // MARK: Mode changes
 
     func setMode(_ new: Mode) {
-        let p = cursor
+        let p = position
         mode = new
-        place(new == .normal ? min(p, lastCursorPosition(p)) : p)
+        if new == .visual || new == .visualLine { anchor = p }
+        if new == .normal { place(min(p, lastCursorPosition(p))) } else { place(p) }
     }
 
     /// After a mouse click in normal mode the caret becomes a block again.
@@ -139,13 +205,13 @@ final class VimEngine {
     func reset() {
         pending = ""
         countText = ""
-        desiredColumn = nil
         mode = .normal
         place(min(cursor, lastCursorPosition(cursor)))
     }
 
     // MARK: Key handling
 
+    /// Handles a key press; returns false to let the text view process it.
     /// Whether a layout without Latin letters is active; replaced in tests.
     var nonLatinLayoutActive: () -> Bool = { KeyLayout.isNonLatinLayoutActive }
 
@@ -157,7 +223,6 @@ final class VimEngine {
         return latin
     }
 
-    /// Handles a key press; returns false to let the text view process it.
     func handle(_ event: NSEvent) -> Bool {
         let flags = event.modifierFlags.intersection([.command, .control, .option])
         let bare = latinKeys(event, event.charactersIgnoringModifiers?.lowercased() ?? "", shift: false)
@@ -167,6 +232,7 @@ final class VimEngine {
         if mode == .insert { return false }
         if flags == .control {
             switch bare {
+            case "r": return handle(key: "\u{12}")
             case "d", "f": return handle(key: "\u{04}")
             case "u", "b": return handle(key: "\u{15}")
             default: return true
@@ -179,39 +245,72 @@ final class VimEngine {
         default: return false // arrows, Tab, Home… keep their usual meaning
         }
         guard let chars = event.characters, !chars.isEmpty else { return true }
-        // The character after f or t is text to find, not a command.
-        let argument = pending.last.map { "fFtT".contains($0) } ?? false
+        // The character after f, t or r is text to find or put, not a command.
+        let argument = pending.last.map { "fFtTr".contains($0) } ?? false
         let keys = argument ? chars : latinKeys(event, chars, shift: event.modifierFlags.contains(.shift))
         for c in keys { handle(key: String(c)) }
         return true
     }
 
-    /// Handles one typed character (Esc is "\u{1B}", ⌃D "\u{04}", ⌃U "\u{15}", Return "\r").
+    /// Handles one typed character (Esc is "\u{1B}", ⌃R "\u{12}", ⌃D "\u{04}", ⌃U "\u{15}", Return "\r").
     @discardableResult
     func handle(key: String) -> Bool {
+        changeStart = nil
+        let wasInsert = mode == .insert
+        // Each command is one step of undo, however many edits it makes.
+        let undo = textView?.undoManager
+        let grouped = !wasInsert && key != "u" && key != "\u{12}" && undo != nil && undo!.groupingLevel == 0
+        if grouped { undo!.beginUndoGrouping() }
+        let handled = process(key)
+        if grouped { undo!.endUndoGrouping() }
+        if let start = changeStart, !wasInsert {
+            undoCursors.append(insertStart == nil ? start : min(start, insertStart!))
+            redoCursors = []
+            if mode != .insert { insertStart = nil }
+        }
+        if mode == .insert, !wasInsert, insertStart == nil {
+            insertStart = cursor
+            insertEdits = edits
+        }
+        return handled
+    }
+
+    private func process(_ key: String) -> Bool {
         guard let c = key.first else { return false }
         if key == "\u{1B}" {
             pending = ""
             countText = ""
             if mode == .insert {
                 let p = cursor
+                // Typing in insert mode is one change for undo.
+                if let start = insertStart {
+                    if edits != insertEdits { undoCursors.append(start) }
+                    insertStart = nil
+                    redoCursors = []
+                }
                 mode = .normal
                 place(p > lineStart(p) ? p - 1 : p)
-                textView?.breakUndoCoalescing()
             } else {
                 setMode(.normal)
             }
+            textView?.breakUndoCoalescing()
             return true
         }
         if mode == .insert { return false }
 
-        if let last = pending.last, "fFtT".contains(last) {
+        // Prefixes that take the next character literally: f F t T r, also after an operator (dfx).
+        if let last = pending.last, "fFtTr".contains(last) {
+            let op = pending.count > 1 ? pending.first : nil
             pending = ""
-            lastFind = (last, c)
-            findMotion(last, c, count: Int(countText) ?? 1)
-            countText = ""
+            if last == "r" {
+                replaceChars(with: c)
+            } else {
+                lastFind = (last, c)
+                findMotion(last, c, count: operatorCount, operator: op)
+            }
             return true
         }
+
         if c.isNumber, c != "0" || !countText.isEmpty {
             countText.append(c)
             return true
@@ -219,28 +318,96 @@ final class VimEngine {
         let count = Int(countText) ?? 1
         let hadCount = !countText.isEmpty
         countText = ""
+        let visual = mode == .visual || mode == .visualLine
 
         if pending == "g" {
             pending = ""
-            if c == "g" { jump(toLine: hadCount ? count - 1 : 0) }
+            if c == "g" { jump(toLine: hadCount ? count - 1 : 0, operator: nil) }
             return true
         }
+        if let op = pending.first, "dcy<>".contains(op) {
+            let total = count * operatorCount
+            if pending.hasSuffix("g") {
+                pending = ""
+                if c == "g" { jump(toLine: 0, operator: op) }
+                return true
+            }
+            switch c {
+            case "g":
+                pending.append("g")
+            case "f", "F", "t", "T":
+                pending = String(op) + String(c)
+                operatorCount = total
+            default:
+                pending = ""
+                if c == op {
+                    lineOperation(op, count: total)
+                } else if c == "G" {
+                    jump(toLine: hadCount ? count - 1 : nil, operator: op)
+                } else {
+                    motion(c, count: total, operator: op)
+                }
+            }
+            return true
+        }
+
         switch c {
-        case "f", "F", "t", "T":
+        case "\u{12}":
+            guard textView?.undoManager?.canRedo == true else { break }
+            textView?.undoManager?.redo()
+            let p = redoCursors.popLast() ?? cursor
+            undoCursors.append(p)
+            place(min(p, lastCursorPosition(p)))
+        case "u" where visual:
+            caseChange(upper: false)
+        case "U" where visual:
+            caseChange(upper: true)
+        case "~" where visual:
+            caseChange(upper: nil)
+        case "o" where visual:
+            swap(&anchor, &visualCursor)
+            place(visualCursor)
+        case "u":
+            var p = cursor
+            for _ in 0..<count where textView?.undoManager?.canUndo == true {
+                textView?.undoManager?.undo()
+                p = undoCursors.popLast() ?? textView?.selectedRange().location ?? p
+                redoCursors.append(p)
+            }
+            p = min(p, length)
+            place(min(p, lastCursorPosition(p)))
+        case "d", "c", "y", "<", ">":
+            if visual {
+                visualOperation(c)
+            } else {
+                pending = String(c)
+                operatorCount = count
+            }
+        case "x":
+            if visual { visualOperation("d") } else { deleteChars(count, before: false) }
+        case "X": deleteChars(count, before: true)
+        case "D": motion("$", count: count, operator: "d")
+        case "C": motion("$", count: count, operator: "c")
+        case "Y": lineOperation("y", count: count)
+        case "s":
+            if visual { visualOperation("c") } else {
+                deleteChars(count, before: false)
+                setMode(.insert)
+            }
+        case "S": lineOperation("c", count: count)
+        case "r", "f", "F", "t", "T":
             pending = String(c)
-            if hadCount { countText = String(count) }
+            operatorCount = count
         case ";", ",":
             if let last = lastFind {
                 let reversed: [Character: Character] = ["f": "F", "F": "f", "t": "T", "T": "t"]
-                findMotion(c == ";" ? last.key : reversed[last.key]!, last.char, count: count)
+                findMotion(c == ";" ? last.key : reversed[last.key]!, last.char, count: count, operator: nil)
             }
         case "g":
             pending = "g"
         case "G":
-            if hadCount { jump(toLine: count - 1) } else { place(firstNonBlank(length)) }
-            desiredColumn = nil
-        case "i":
-            setMode(.insert)
+            jump(toLine: hadCount ? count - 1 : nil, operator: nil)
+        case "i": setMode(.insert)
         case "a":
             let p = cursor
             mode = .insert
@@ -251,39 +418,17 @@ final class VimEngine {
         case "A":
             mode = .insert
             place(lineEnd(cursor))
-        case "o", "O":
-            openLine(below: c == "o")
-        case "/", "?":
-            searchBackwards = c == "?"
-            finder(.showFindInterface)
-        case "n", "N":
-            for _ in 0..<count { finder((c == "N") != searchBackwards ? .previousMatch : .nextMatch) }
-            normalizeMatch()
-        case "\r":
-            motion("+", count: count)
-        case "\u{04}", "\u{15}":
-            motion(c == "\u{04}" ? "j" : "k", count: 15 * count)
-        default:
-            motion(c, count: count)
+        case "o", "O": openLine(below: c == "o")
+        case "v": setMode(mode == .visual ? .normal : .visual)
+        case "V": setMode(mode == .visualLine ? .normal : .visualLine)
+        case "p", "P": put(after: c == "p", count: count)
+        case "J": joinLines(max(count, 2) - 1)
+        case "~": toggleCase(count)
+        case "\r": motion("+", count: count, operator: nil)
+        case "\u{04}", "\u{15}": motion(c == "\u{04}" ? "j" : "k", count: 15 * count, operator: nil)
+        default: motion(c, count: count, operator: nil)
         }
         return true
-    }
-
-    // MARK: Search
-
-    /// Runs a find bar action of the text view, as the Find menu does.
-    private func finder(_ action: NSTextFinder.Action) {
-        guard let tv = textView else { return }
-        let item = NSMenuItem()
-        item.tag = action.rawValue
-        tv.performTextFinderAction(item)
-    }
-
-    /// The cursor goes to the start of the match found.
-    private func normalizeMatch() {
-        guard let tv = textView else { return }
-        let p = tv.selectedRange().location
-        place(min(p, lastCursorPosition(p)))
     }
 
     // MARK: Motions
@@ -341,14 +486,15 @@ final class VimEngine {
         return p
     }
 
-    /// Where a motion key moves the cursor; nil for an unknown key or when it cannot move.
-    private func target(_ key: Character, from start: Int, count: Int) -> Int? {
+    /// Target of a motion key, whether an operator includes the target character, and whether it is linewise.
+    private func target(_ key: Character, from start: Int, count: Int, forOperator: Bool)
+        -> (end: Int, inclusive: Bool, linewise: Bool)? {
         var p = start
         switch key {
         case "h":
-            return max(lineStart(p), p - count)
+            return (max(lineStart(p), p - count), false, false)
         case "l", " ":
-            return min(p + count, lastCursorPosition(p))
+            return (forOperator ? min(p + count, lineEnd(p)) : min(p + count, lastCursorPosition(p)), false, false)
         case "j", "k", "+", "-":
             let down = key == "j" || key == "+"
             let col = desiredColumn ?? column(p)
@@ -356,80 +502,317 @@ final class VimEngine {
             guard let s = lineStart(p, movingBy: count, down: down) else { return nil }
             let firstColumn = key == "+" || key == "-"
             desiredColumn = firstColumn ? nil : col
-            return firstColumn ? firstNonBlank(s) : min(s + col, lastCursorPosition(s))
+            return (firstColumn ? firstNonBlank(s) : min(s + col, lastCursorPosition(s)), true, true)
         case "w", "W":
             for _ in 0..<count { p = nextWordStart(p, big: key == "W") }
-            return p
+            // "dw" on the last word of a line stops at the line end.
+            if forOperator, lineEnd(start) < p { p = max(lineEnd(start), start) }
+            return (p, false, false)
         case "b", "B":
             for _ in 0..<count { p = previousWordStart(p, big: key == "B") }
-            return p
+            return (p, false, false)
         case "e", "E":
             for _ in 0..<count { p = wordEnd(p, big: key == "E") }
-            return p
+            return (p, true, false)
         case "0":
-            return lineStart(p)
+            return (lineStart(p), false, false)
         case "^", "_":
-            return firstNonBlank(p)
+            return (firstNonBlank(p), false, false)
         case "$":
             var e = p
             for i in 0..<count { e = lineEnd(i == 0 ? e : e + 1) }
-            return max(lineStart(e), e - 1)
+            return (forOperator ? e : max(lineStart(e), e - 1), false, false)
         case "}":
             for _ in 0..<count {
                 p = lineEnd(p)
                 while p < length, !(isNewline(p) && (p + 1 >= length || isNewline(p + 1))) { p = lineEnd(p + 1) }
                 if p < length { p += 1 }
             }
-            return min(p, length)
+            return (min(p, length), false, false)
         case "{":
             for _ in 0..<count {
                 p = lineStart(p)
                 if p > 0 { p -= 1 }
                 while p > 0, !(isNewline(p) && isNewline(p - 1)) { p -= 1 }
             }
-            return p
+            return (p, false, false)
         default:
             return nil
         }
     }
 
-    private func motion(_ key: Character, count: Int) {
-        guard let end = target(key, from: cursor, count: count) else {
+    private func motion(_ key: Character, count: Int, operator op: Character?) {
+        let start = position
+        guard let t = target(key, from: start, count: count, forOperator: op != nil) else {
             NSSound.beep()
             return
         }
-        if !"jk+-".contains(key) { desiredColumn = nil }
-        place(min(end, lastCursorPosition(end)))
+        if key != "j" && key != "k" { desiredColumn = nil }
+        finish(start: start, end: t.end, inclusive: t.inclusive, linewise: t.linewise, operator: op, key: key, count: count)
     }
 
-    private func findMotion(_ key: Character, _ char: Character, count: Int) {
-        guard let end = find(key, char, from: cursor, count: max(count, 1)) else {
+    private func findMotion(_ key: Character, _ char: Character, count: Int, operator op: Character?) {
+        let start = position
+        guard let end = find(key, char, from: start, count: max(count, 1)) else {
             NSSound.beep()
             return
         }
         desiredColumn = nil
-        place(end)
+        finish(start: start, end: end, inclusive: key == "f" || key == "t", linewise: false, operator: op, key: key, count: count)
     }
 
-    private func jump(toLine line: Int) {
+    private func finish(start: Int, end: Int, inclusive: Bool, linewise: Bool, operator op: Character?, key: Character,
+                        count: Int) {
+        guard let op else {
+            place(mode == .normal ? min(end, lastCursorPosition(end)) : end)
+            return
+        }
+        if linewise {
+            let lo = lineStart(min(start, end))
+            var hi = lineEnd(max(start, end))
+            if hi < length { hi += 1 }
+            applyLinewise(op, NSRange(location: lo, length: hi - lo))
+            return
+        }
+        let lo = min(start, end)
+        var hi = max(start, end)
+        if inclusive { hi = min(hi + 1, length) }
+        // "cw" changes to the end of the word, like "ce".
+        if op == "c", key == "w" || key == "W", wordClass(start, big: key == "W") != .space {
+            var e = start
+            for _ in 0..<max(count, 1) { e = wordEnd(e, big: key == "W") }
+            hi = min(e + 1, length)
+        }
+        operate(op, NSRange(location: lo, length: hi - lo), linewise: false)
+    }
+
+    /// To a line (0-based), or the last one.
+    private func jump(toLine line: Int?, operator op: Character?) {
         desiredColumn = nil
-        place(firstNonBlank(startOfLine(number: max(0, line))))
+        let target = firstNonBlank(line.map { startOfLine(number: max(0, $0)) } ?? lineStart(length))
+        if let op {
+            let lo = lineStart(min(position, target))
+            var hi = lineEnd(max(position, target))
+            if hi < length { hi += 1 }
+            applyLinewise(op, NSRange(location: lo, length: hi - lo))
+        } else {
+            place(target)
+        }
     }
 
-    // MARK: Insert
+    // MARK: Operators
+
+    private func operate(_ op: Character, _ range: NSRange, linewise: Bool) {
+        textView?.breakUndoCoalescing()
+        switch op {
+        case "y":
+            yank(range, linewise: linewise)
+            mode = .normal
+            place(range.location)
+        case "d", "c":
+            yank(range, linewise: linewise)
+            replace(range, with: "")
+            if op == "c" {
+                mode = .insert
+                place(range.location)
+            } else {
+                mode = .normal
+                place(min(range.location, lastCursorPosition(range.location)))
+            }
+        case ">", "<":
+            indent(range, right: op == ">")
+        default:
+            break
+        }
+    }
+
+    private func applyLinewise(_ op: Character, _ range: NSRange) {
+        let original = range
+        var range = range
+        if op == "<" || op == ">" {
+            indent(range, right: op == ">")
+            return
+        }
+        // The last line has no newline of its own: take the one before it instead.
+        let content = text.substring(with: range)
+        if !content.hasSuffix("\n"), range.location > 0, isNewline(range.location - 1) {
+            range = NSRange(location: range.location - 1, length: range.length + 1)
+        }
+        var yanked = text.substring(with: range)
+        if yanked.hasPrefix("\n"), range.location + range.length == length, !content.hasSuffix("\n") { yanked.removeFirst() }
+        if !yanked.hasSuffix("\n") { yanked += "\n" }
+        register = yanked
+        registerLinewise = true
+        textView?.breakUndoCoalescing()
+        switch op {
+        case "c":
+            // Keep the line (and its indentation), change its content.
+            let first = original.location
+            let lastEnd = lineEnd(max(first, NSMaxRange(original) - 1))
+            let indentEnd = firstNonBlank(first)
+            replace(NSRange(location: indentEnd, length: max(0, lastEnd - indentEnd)), with: "")
+            mode = .insert
+            place(indentEnd)
+        case "d":
+            replace(range, with: "")
+            mode = .normal
+            place(firstNonBlank(lineStart(min(range.location, length))))
+        default:
+            mode = .normal
+            place(original.location)
+        }
+    }
+
+    private func lineOperation(_ op: Character, count: Int) {
+        let lo = lineStart(position)
+        var hi = lo
+        for _ in 0..<count where hi < length { hi = min(lineEnd(hi) + 1, length) }
+        if hi == lo { hi = lineEnd(lo) }
+        applyLinewise(op, NSRange(location: lo, length: hi - lo))
+    }
+
+    private func visualOperation(_ op: Character) {
+        guard let tv = textView else { return }
+        let range = tv.selectedRange()
+        let linewise = mode == .visualLine
+        mode = .normal
+        if linewise { applyLinewise(op, range) } else { operate(op, range, linewise: false) }
+    }
+
+    private func indent(_ range: NSRange, right: Bool) {
+        let lo = lineStart(range.location)
+        let hi = lineEnd(max(range.location, NSMaxRange(range) - 1))
+        let block = text.substring(with: NSRange(location: lo, length: hi - lo))
+        let lines = block.components(separatedBy: "\n").map { line -> String in
+            if right { return line.isEmpty ? line : "    " + line }
+            var l = Substring(line)
+            var removed = 0
+            while removed < 4, let f = l.first, f == " " { l = l.dropFirst(); removed += 1 }
+            if removed == 0, l.first == "\t" { l = l.dropFirst() }
+            return String(l)
+        }
+        replace(NSRange(location: lo, length: hi - lo), with: lines.joined(separator: "\n"))
+        mode = .normal
+        place(firstNonBlank(lo))
+    }
+
+    private func deleteChars(_ count: Int, before: Bool) {
+        let p = cursor
+        let range = before
+            ? NSRange(location: max(lineStart(p), p - count), length: p - max(lineStart(p), p - count))
+            : NSRange(location: p, length: min(count, lineEnd(p) - p))
+        guard range.length > 0 else { return }
+        yank(range, linewise: false)
+        textView?.breakUndoCoalescing()
+        replace(range, with: "")
+        place(min(range.location, lastCursorPosition(range.location)))
+    }
+
+    private func replaceChars(with c: Character) {
+        let p = cursor
+        let n = min(max(operatorCount, 1), lineEnd(p) - p)
+        guard n > 0 else { return }
+        replace(NSRange(location: p, length: n), with: String(repeating: String(c), count: n))
+        place(p + n - 1)
+    }
+
+    private func toggleCase(_ count: Int) {
+        let p = cursor
+        let n = min(count, lineEnd(p) - p)
+        guard n > 0 else { return }
+        let s = text.substring(with: NSRange(location: p, length: n))
+        let toggled = String(s.map { c -> Character in
+            let str = String(c)
+            return Character(str == str.uppercased() ? str.lowercased() : str.uppercased())
+        })
+        replace(NSRange(location: p, length: n), with: toggled)
+        place(min(p + n, lastCursorPosition(p)))
+    }
+
+    private func caseChange(upper: Bool?) {
+        guard let tv = textView else { return }
+        let r = tv.selectedRange()
+        let s = text.substring(with: r)
+        let changed: String
+        switch upper {
+        case true?: changed = s.uppercased()
+        case false?: changed = s.lowercased()
+        case nil: changed = String(s.map { c -> Character in
+            let str = String(c)
+            return Character(str == str.uppercased() ? str.lowercased() : str.uppercased())
+        })
+        }
+        replace(r, with: changed)
+        mode = .normal
+        place(r.location)
+    }
 
     private func openLine(below: Bool) {
-        guard let tv = textView, tv.isEditable else { return }
         let p = cursor
         let indent = text.substring(with: NSRange(location: lineStart(p), length: firstNonBlank(p) - lineStart(p)))
-        let at = below ? lineEnd(p) : lineStart(p)
-        let inserted = below ? "\n" + indent : indent + "\n"
-        tv.breakUndoCoalescing()
-        if tv.shouldChangeText(in: NSRange(location: at, length: 0), replacementString: inserted) {
-            tv.textStorage?.replaceCharacters(in: NSRange(location: at, length: 0), with: inserted)
-            tv.didChangeText()
+        textView?.breakUndoCoalescing()
+        if below {
+            let e = lineEnd(p)
+            replace(NSRange(location: e, length: 0), with: "\n" + indent)
+            mode = .insert
+            place(e + 1 + (indent as NSString).length)
+        } else {
+            let s = lineStart(p)
+            replace(NSRange(location: s, length: 0), with: indent + "\n")
+            mode = .insert
+            place(s + (indent as NSString).length)
         }
-        mode = .insert
-        place(at + (indent as NSString).length + (below ? 1 : 0))
+    }
+
+    private func put(after: Bool, count: Int) {
+        guard !register.isEmpty else { return }
+        let content = String(repeating: register, count: max(count, 1))
+        textView?.breakUndoCoalescing()
+        if mode == .visual || mode == .visualLine, let tv = textView {
+            let r = tv.selectedRange()
+            mode = .normal
+            replace(r, with: content)
+            place(r.location)
+            return
+        }
+        let p = cursor
+        if registerLinewise {
+            if after {
+                let e = lineEnd(p)
+                if e >= length {
+                    replace(NSRange(location: e, length: 0), with: "\n" + String(content.dropLast()))
+                    place(firstNonBlank(e + 1))
+                } else {
+                    replace(NSRange(location: e + 1, length: 0), with: content)
+                    place(firstNonBlank(e + 1))
+                }
+            } else {
+                let s = lineStart(p)
+                replace(NSRange(location: s, length: 0), with: content)
+                place(firstNonBlank(s))
+            }
+        } else {
+            let at = after && p < lineEnd(p) ? p + 1 : p
+            replace(NSRange(location: at, length: 0), with: content)
+            place(at + (content as NSString).length - 1)
+        }
+    }
+
+    private func joinLines(_ times: Int) {
+        var p = cursor
+        for _ in 0..<times {
+            let e = lineEnd(p)
+            guard e < length else { break }
+            var next = e + 1
+            while next < length, char(next) == 32 || char(next) == 9 { next += 1 }
+            let joiner = next < length && !isNewline(next) && e > lineStart(e) ? " " : ""
+            replace(NSRange(location: e, length: next - e), with: joiner)
+            p = e
+        }
+        place(p)
+    }
+
+    private func textDidChange() {
+        edits &+= 1
     }
 }

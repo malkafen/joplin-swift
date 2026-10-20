@@ -59,11 +59,11 @@ Joplin Server account, after a minute of idling:
   - images from attachments and from the web (optional), scaled to the text width with rounded corners
   - diagrams drawn natively, no JavaScript: Mermaid flowcharts, state and sequence diagrams and pie charts, and
     draw.io diagrams (SVG from the Joplin draw.io plugin, `.drawio` files, ```` ```drawio ```` blocks)
-- **Vim mode** (View → Vim Mode, <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>V</kbd>): Vim navigation on top of the
-  native editor. Normal mode with counts and the motions `h j k l w b e W B E 0 ^ $ gg G f F t T ; , { } + - ⌃D ⌃U`;
-  `i a I A o O` start typing, <kbd>Esc</kbd> returns. Search uses the system find bar: `/` and `?` open it, `n` and `N`
-  go to the next and previous match. Editing, undo and the clipboard are the usual macOS ones. The mode is shown in
-  the editor's corner; commands work the same with a non-Latin keyboard layout (e.g. Russian).
+- **Vim mode** (View → Vim Mode, <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>V</kbd>): basic Vim on top of the native
+  editor. Normal, insert, visual and visual-line modes with counts; motions `h j k l w b e W B E 0 ^ $ gg G f F t T ; ,
+  { } + - ⌃D ⌃U`, operators `d c y > <` with motions, doubled for lines and in visual mode, and `x X D C Y s S r J ~ p
+  P o O i a I A u ⌃R`. Yanked and deleted text goes to one unnamed register. Search is the system find bar (⌘F). The
+  mode is shown in the editor's corner; commands work the same with a non-Latin keyboard layout (e.g. Russian).
 - **Huge notes** (hundreds of thousands of lines) open at once: the editor shows the start and finishes loading off
   the main thread, Markdown is styled only around what is on screen, and switching between editor, split and preview
   keeps both views alive, so it does not reload the note.
