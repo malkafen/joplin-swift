@@ -201,6 +201,13 @@ final class VimEngine {
         place(min(cursor, lastCursorPosition(cursor)))
     }
 
+    /// Puts the cursor at `i`, e.g. on a search match; a visual selection ends.
+    func jump(to i: Int) {
+        if mode == .visual || mode == .visualLine { mode = .normal }
+        desiredColumn = nil
+        place(i)
+    }
+
     /// Back to normal mode after loading another note.
     func reset() {
         pending = ""

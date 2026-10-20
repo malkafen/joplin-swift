@@ -89,6 +89,8 @@ struct Typography: Equatable {
 /// Finding and marking the words of a search in text.
 enum SearchHighlight {
     static var color: NSColor { NSColor.systemYellow.withAlphaComponent(0.45) }
+    /// The match stepped to.
+    static var currentColor: NSColor { NSColor.systemOrange.withAlphaComponent(0.75) }
 
     /// Search words without quotes; FTS matches prefixes, so these are matched as substrings.
     static func terms(_ text: String) -> [String] {

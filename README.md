@@ -76,7 +76,9 @@ Joplin Server account, after a minute of idling:
 - **Layouts**: editor, preview, or side-by-side split (<kbd>⌃</kbd><kbd>L</kbd>)
 - **Search** (<kbd>⌘</kbd><kbd>L</kbd>): full-text search over all notes with SQLite FTS5, works for any language. The list shows the
   text around the match; the words are highlighted in the list, the editor and the preview as you type, the note scrolls to
-  the first match, and <kbd>⌘</kbd><kbd>G</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd> step through the matches
+  the first match, and <kbd>Return</kbd> / <kbd>⇧</kbd><kbd>Return</kbd> in the search field, <kbd>⌘</kbd><kbd>G</kbd> /
+  <kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd> or the arrows under the note step through the matches ("3 of 120")
+- **Note info**: a quiet line under the note shows when it was created, its lines, words, characters and reading time
 - **Tags**: token field with completion of existing tags. Tags can be hidden in the sidebar
   (<kbd>⌃</kbd><kbd>⌘</kbd><kbd>T</kbd>, or collapse the section) and above notes (View menu or Settings).
 - **Attachments**: drop files or paste images. They are stored as Joplin resources and linked as `:/id`.

@@ -359,6 +359,62 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(model.notes.map(\.id) == all)
     }
 
+    @Test func noteStatsCountLinesWordsAndMatches() {
+        let stats = NoteStats("# Заметка\n\nOne two, three-four don't\n- [x] café 42", terms: ["cafe", "two"])
+        #expect(stats.lines == 4)
+        #expect(stats.words == 9)
+        #expect(stats.characters == 50)
+        #expect(stats.matches == 2)
+        #expect(NoteStats("", terms: []).lines == 0)
+        #expect(NoteStats(String(repeating: "word ", count: 1_000), terms: []).readingMinutes == 5)
+    }
+
+    /// Return / ⌘G step through the matches from the cursor, wrapping around; the preview steps from what is shown.
+    @Test func stepperWalksThroughMatches() {
+        let stepper = SearchStepper()
+        var positions: [SearchPosition] = []
+        stepper.onStep = { positions.append($0) }
+        let tv = MarkdownTextView(usingTextLayoutManager: false)
+        tv.textContainer?.replaceLayoutManager(SearchMarkingLayoutManager())
+        tv.string = "alpha beta\ngamma beta\nbeta"
+        tv.stepper = stepper
+        stepper.editor = tv
+        #expect(!stepper.step(forward: true, in: tv)) // no search
+        let lm = tv.layoutManager as! SearchMarkingLayoutManager
+        lm.searchTerms = ["beta"]
+        tv.setSelectedRange(NSRange(location: 8, length: 0))
+        #expect(stepper.step(forward: true, in: tv))
+        #expect(tv.selectedRange() == NSRange(location: 17, length: 4))
+        #expect(lm.currentMatch == NSRange(location: 17, length: 4))
+        stepper.step(forward: true, in: tv)
+        stepper.step(forward: true, in: tv)
+        #expect(tv.selectedRange().location == 6) // wrapped
+        stepper.step(forward: false, in: tv)
+        #expect(tv.selectedRange().location == 22)
+        #expect(positions.map(\.index) == [1, 2, 0, 2] && positions.allSatisfy { $0.count == 3 })
+        // Typing forgets the match stepped to.
+        tv.insertText("x", replacementRange: NSRange(location: 0, length: 0))
+        #expect(lm.currentMatch == nil)
+        lm.searchTerms = ["zzz"]
+        stepper.step(forward: true, in: tv)
+        #expect(positions.last == SearchPosition(index: 0, count: 0))
+    }
+
+    @Test func modelStepsInTheEditorAndForgetsThePosition() throws {
+        let h = try ModelHarness()
+        let model = h.model
+        let tv = MarkdownTextView(usingTextLayoutManager: false)
+        tv.textContainer?.replaceLayoutManager(SearchMarkingLayoutManager())
+        tv.string = "one two one"
+        (tv.layoutManager as! SearchMarkingLayoutManager).searchTerms = ["one"]
+        model.searchStepper.editor = tv
+        model.layout = .editor
+        model.stepMatch(forward: true)
+        #expect(model.currentNote == nil || model.searchPosition == SearchPosition(index: 0, count: 2))
+        model.searchText = "one"
+        #expect(model.searchPosition == nil)
+    }
+
     /// Search words are drawn where the text is shown; the text itself is left alone.
     @Test func layoutManagerMarksMatchesWithoutTouchingTheText() {
         let storage = NSTextStorage(string: String(repeating: "one two three\n", count: 2_000))

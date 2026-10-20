@@ -79,7 +79,7 @@ final class EditorBridge {
 }
 
 /// NSTextView subclass that turns dropped/pasted files and images into Joplin resources.
-final class MarkdownTextView: NSTextView, ReadableWidth {
+final class MarkdownTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
     var onDropFiles: (([URL]) -> String?)?
     var onPasteImage: ((Data) -> String?)?
     var pasteboard = NSPasteboard.general
@@ -93,6 +93,20 @@ final class MarkdownTextView: NSTextView, ReadableWidth {
     override func keyDown(with event: NSEvent) {
         if let vim, vim.handle(event) { return }
         super.keyDown(with: event)
+    }
+
+    weak var stepper: SearchStepper?
+
+    override func performTextFinderAction(_ sender: Any?) {
+        if !stepSearch(sender) { super.performTextFinderAction(sender) }
+    }
+
+    override func performFindPanelAction(_ sender: Any?) {
+        if !stepSearch(sender) { super.performFindPanelAction(sender) }
+    }
+
+    override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
+        validatesSearchStep(item) || super.validateUserInterfaceItem(item)
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -194,13 +208,14 @@ struct MarkdownEditor: NSViewRepresentable {
     var onVimMode: (VimEngine.Mode) -> Void = { _ in }
     var isEditable: Bool
     var bridge: EditorBridge
+    var stepper: SearchStepper?
     var onChange: (String) -> Void
     var onDropFiles: ([URL]) -> String?
     var onPasteImage: (Data) -> String?
 
     init(text: String, noteId: String, typography: Typography, readableWidth: Bool, highlights: [String] = [],
          vimMode: Bool = false, onVimMode: @escaping (VimEngine.Mode) -> Void = { _ in }, isEditable: Bool,
-         bridge: EditorBridge,
+         bridge: EditorBridge, stepper: SearchStepper? = nil,
          onChange: @escaping (String) -> Void, onDropFiles: @escaping ([URL]) -> String?,
          onPasteImage: @escaping (Data) -> String?) {
         box = TextBox(text)
@@ -212,6 +227,7 @@ struct MarkdownEditor: NSViewRepresentable {
         self.onVimMode = onVimMode
         self.isEditable = isEditable
         self.bridge = bridge
+        self.stepper = stepper
         self.onChange = onChange
         self.onDropFiles = onDropFiles
         self.onPasteImage = onPasteImage
@@ -260,6 +276,8 @@ struct MarkdownEditor: NSViewRepresentable {
         scroll.documentView = tv
         context.coordinator.textView = tv
         bridge.textView = tv
+        tv.stepper = stepper
+        stepper?.editor = tv
         configureVim(tv)
         load(into: tv, context: context)
         scroll.contentView.postsBoundsChangedNotifications = true
