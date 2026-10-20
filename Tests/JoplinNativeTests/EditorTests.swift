@@ -264,22 +264,17 @@ import Testing
         #expect(ms.attribute(.foregroundColor, at: 1_500, effectiveRange: nil) as? NSColor == .systemIndigo)
     }
 
-    @Test func searchWordsAndFontsRestyleTheWindow() throws {
+    @Test func fontsRestyleTheWindow() throws {
         let storage = NSTextStorage(string: "alpha beta\n**gamma**")
         let h = MarkdownHighlighter()
         h.highlight(storage)
-        h.searchTerms = ["beta"]
-        h.refresh(storage)
-        #expect(attr(storage, .backgroundColor, at: "beta") as? NSColor == SearchHighlight.color)
         h.configure(Typography(family: .monospaced, size: 18))
         h.restyle(storage)
         #expect((attr(storage, .font, at: "alpha") as? NSFont)?.pointSize == 18)
-        #expect(attr(storage, .backgroundColor, at: "beta") as? NSColor == SearchHighlight.color)
         // A highlighter that has not seen this text styles it from scratch.
         let fresh = MarkdownHighlighter()
-        fresh.refresh(storage)
         fresh.restyle(storage)
-        #expect(attr(storage, .backgroundColor, at: "beta") == nil)
+        #expect((attr(storage, .font, at: "alpha") as? NSFont)?.pointSize != 18)
     }
 }
 

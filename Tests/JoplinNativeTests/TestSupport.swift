@@ -29,6 +29,7 @@ final class ModelHarness {
             self.opened.append($0)
         }
         model.findPasteboard = findPasteboard
+        model.searchDelay = 0
         return model
     }()
     let findPasteboard = NSPasteboard(name: NSPasteboard.Name("jn-find-\(UUID().uuidString)"))

@@ -229,6 +229,7 @@ struct MarkdownEditor: NSViewRepresentable {
 
         // TextKit 1, laid out only where it is shown: TextKit 2 lays out a huge note far more slowly.
         let tv = MarkdownTextView(usingTextLayoutManager: false)
+        tv.textContainer?.replaceLayoutManager(SearchMarkingLayoutManager())
         tv.frame = NSRect(origin: .zero, size: scroll.contentSize)
         tv.layoutManager?.allowsNonContiguousLayout = true
         tv.isRichText = false
@@ -292,7 +293,7 @@ struct MarkdownEditor: NSViewRepresentable {
         c.noteId = noteId
         c.typography = typography
         c.lastText = text
-        c.setText(text, typography: typography, highlights: highlights, in: tv, selection: nil)
+        c.setText(text, typography: typography, in: tv, selection: nil)
     }
 
     func updateNSView(_ scroll: NSScrollView, context: Context) {
@@ -303,11 +304,11 @@ struct MarkdownEditor: NSViewRepresentable {
         tv.isEditable = isEditable && !c.isLoadingInBackground
         tv.maxLineWidth = readableWidth ? typography.readableWidth : nil
         configureVim(tv)
+        let newTerms = c.searchTerms != highlights
+        c.searchTerms = highlights
         if c.noteId != noteId {
             load(into: tv, context: context)
-        } else if c.highlighter.searchTerms != highlights {
-            c.highlighter.searchTerms = highlights
-            if let storage = tv.textStorage { c.highlighter.refresh(storage) }
+        } else if newTerms {
             c.revealFirstMatch()
         } else if c.typography != typography {
             c.typography = typography
@@ -319,7 +320,7 @@ struct MarkdownEditor: NSViewRepresentable {
             c.lastText = text
             guard !tv.string.isLiterally(text) else { return }
             // Changed outside the editor (e.g. checkbox toggled in the preview).
-            c.setText(text, typography: typography, highlights: highlights, in: tv, selection: tv.selectedRange())
+            c.setText(text, typography: typography, in: tv, selection: tv.selectedRange())
         }
     }
 
@@ -333,6 +334,11 @@ struct MarkdownEditor: NSViewRepresentable {
         /// The text last loaded or reported; when the model hands it back nothing needs comparing.
         var lastText = ""
         var highlighter = MarkdownHighlighter()
+        /// Words of the active search, drawn over the text.
+        var searchTerms: [String] {
+            get { (textView?.layoutManager as? SearchMarkingLayoutManager)?.searchTerms ?? [] }
+            set { (textView?.layoutManager as? SearchMarkingLayoutManager)?.searchTerms = newValue }
+        }
         /// A huge note is being prepared off the main thread; meanwhile its start is shown, read-only.
         private(set) var isLoadingInBackground = false
         private var generation = 0
@@ -346,13 +352,12 @@ struct MarkdownEditor: NSViewRepresentable {
         }
 
         /// Shows `text`: a new note (selection nil: at the top, undo cleared) or a change made outside the editor.
-        func setText(_ text: String, typography: Typography, highlights: [String], in tv: NSTextView, selection: NSRange?) {
+        func setText(_ text: String, typography: Typography, in tv: NSTextView, selection: NSRange?) {
             generation += 1
             // The length in UTF-8 is known without reading a native string.
             guard text.quickLength > Self.backgroundLength, tv.layoutManager != nil else {
                 isLoadingInBackground = false
                 highlighter.configure(typography)
-                highlighter.searchTerms = highlights
                 tv.typingAttributes = highlighter.baseAttributes
                 replaceText(text, in: tv, selection: selection)
                 return
@@ -360,7 +365,6 @@ struct MarkdownEditor: NSViewRepresentable {
             if selection == nil {
                 // The start at once, in the old storage: a new one is laid out from scratch.
                 highlighter.configure(typography)
-                highlighter.searchTerms = highlights
                 tv.typingAttributes = highlighter.baseAttributes
                 replaceText(text.leadingParagraphs(limit: 20_000), in: tv, selection: nil)
             }
@@ -370,7 +374,6 @@ struct MarkdownEditor: NSViewRepresentable {
             let visible = selection.map { _ in highlighter.visibleRange } ?? NSRange(location: 0, length: 0)
             nonisolated(unsafe) let fresh = MarkdownHighlighter()
             fresh.configure(typography)
-            fresh.searchTerms = highlights
             loadQueue.async { [weak self] in
                 let storage = NSTextStorage(string: text, attributes: fresh.baseAttributes)
                 fresh.show(visible, in: storage)
@@ -440,17 +443,13 @@ struct MarkdownEditor: NSViewRepresentable {
                 tv.typingAttributes = fresh.baseAttributes
                 fresh.restyle(storage)
             }
-            if parent.highlights != fresh.searchTerms {
-                fresh.searchTerms = parent.highlights
-                fresh.refresh(storage)
-            }
             viewportChanged()
         }
 
         /// Shows the first search match with the system find indicator.
         func revealFirstMatch() {
-            guard let tv = textView,
-                  let first = SearchHighlight.ranges(of: highlighter.searchTerms, in: tv.string, limit: 1).first else { return }
+            guard let tv = textView, let storage = tv.textStorage,
+                  let first = SearchHighlight.ranges(of: searchTerms, in: storage.mutableString, limit: 1).first else { return }
             tv.scrollRangeToVisible(first)
             if tv.window != nil { tv.showFindIndicator(for: first) }
         }
@@ -484,8 +483,6 @@ struct MarkdownEditor: NSViewRepresentable {
 /// the text reads like the rendered note, and fenced code is coloured like in the preview.
 final class MarkdownHighlighter {
     private(set) var baseAttributes: [NSAttributedString.Key: Any] = [:]
-    /// Words of the active search, marked like find results.
-    var searchTerms: [String] = []
     private var typography = Typography()
     private var baseFont = NSFont.systemFont(ofSize: 14)
     private var boldFont = NSFont.boldSystemFont(ofSize: 14)
@@ -866,14 +863,6 @@ final class MarkdownHighlighter {
         window = next
     }
 
-    /// Restyles the styled part, e.g. for other search words.
-    func refresh(_ storage: NSTextStorage) {
-        guard highlightedLength == storage.length else { return highlight(storage) }
-        storage.beginEditing()
-        apply(window, to: storage)
-        storage.endEditing()
-    }
-
     /// Applies new base attributes everywhere, e.g. after a font change.
     func restyle(_ storage: NSTextStorage) {
         guard highlightedLength == storage.length else { return highlight(storage) }
@@ -902,9 +891,6 @@ final class MarkdownHighlighter {
         if from < NSMaxRange(range) { segments.append(NSRange(location: from, length: NSMaxRange(range) - from)) }
         for segment in segments { applyPatterns(segment, storage, text) }
         for b in partial { applyPartialBlock(b, NSIntersectionRange(b, range), storage, ns) }
-        for r in SearchHighlight.ranges(of: searchTerms, in: text, range: range) {
-            storage.addAttribute(.backgroundColor, value: SearchHighlight.color, range: r)
-        }
     }
 
     private func applyPatterns(_ range: NSRange, _ storage: NSTextStorage, _ text: String) {

@@ -116,8 +116,23 @@ final class AppModel {
     var searchText = "" {
         didSet {
             guard oldValue != searchText else { return }
-            reloadNotes(selectFirst: true)
+            // The words are highlighted in the note at once; the list (a full-text query over all notes, and maybe
+            // another note to load) follows once typing pauses.
+            pendingSearch?.cancel()
+            guard searchDelay > 0, !searchText.isEmpty else { return searchNow() }
+            let item = DispatchWorkItem { [weak self] in self?.searchNow() }
+            pendingSearch = item
+            DispatchQueue.main.asyncAfter(deadline: .now() + searchDelay, execute: item)
         }
+    }
+    @ObservationIgnored var searchDelay: TimeInterval = 0.15
+    @ObservationIgnored private var pendingSearch: DispatchWorkItem?
+
+    /// Lists the notes found by the search typed so far.
+    func searchNow() {
+        pendingSearch?.cancel()
+        pendingSearch = nil
+        reloadNotes(selectFirst: true)
     }
 
     var selectedNoteIDs: Set<String> = [] {

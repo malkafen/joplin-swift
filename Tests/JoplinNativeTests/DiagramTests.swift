@@ -303,9 +303,7 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         let ranges = SearchHighlight.ranges(of: ["meet", "cafe"], in: text)
         #expect(ranges.map { (text as NSString).substring(with: $0) } == ["Meet", "café", "MEET"])
         #expect(SearchHighlight.ranges(of: [], in: text).isEmpty)
-        let attributed = NSMutableAttributedString(string: text)
-        #expect(SearchHighlight.apply(["again"], to: attributed)?.location == 28)
-        #expect(attributed.attribute(.backgroundColor, at: 28, effectiveRange: nil) != nil)
+        #expect(SearchHighlight.ranges(of: ["again"], in: text, limit: 1).first?.location == 28)
     }
 
     @Test func storeSnippetsAroundTheMatch() throws {
@@ -345,11 +343,36 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(!model.notes.isEmpty)
         #expect(h.findPasteboard.string(forType: .string) == "checkbox")
 
-        let highlighter = MarkdownHighlighter()
-        highlighter.searchTerms = ["two"]
-        let storage = NSTextStorage(string: "one two three")
-        highlighter.highlight(storage)
-        #expect(storage.attribute(.backgroundColor, at: 4, effectiveRange: nil) as? NSColor == SearchHighlight.color)
+    }
+
+    @Test func listFollowsWhenTypingPauses() throws {
+        let h = try ModelHarness()
+        let model = h.model
+        let all = model.notes.map(\.id)
+        model.searchDelay = 60
+        model.searchText = "zzzz"
+        #expect(model.searchTerms == ["zzzz"])
+        #expect(model.notes.map(\.id) == all)
+        model.searchNow()
+        #expect(model.notes.isEmpty)
+        model.searchText = ""
+        #expect(model.notes.map(\.id) == all)
+    }
+
+    /// Search words are drawn where the text is shown; the text itself is left alone.
+    @Test func layoutManagerMarksMatchesWithoutTouchingTheText() {
+        let storage = NSTextStorage(string: String(repeating: "one two three\n", count: 2_000))
+        let lm = SearchMarkingLayoutManager()
+        let container = NSTextContainer(size: NSSize(width: 300, height: CGFloat.greatestFiniteMagnitude))
+        lm.addTextContainer(container)
+        storage.addLayoutManager(lm)
+        lm.searchTerms = ["TWO", "thr"]
+        let glyphs = lm.glyphRange(forCharacterRange: NSRange(location: 14, length: 14), actualCharacterRange: nil)
+        let matches = lm.searchMatches(forGlyphRange: glyphs)
+        #expect(matches == [NSRange(location: 18, length: 3), NSRange(location: 22, length: 3)])
+        let pills = lm.pills(forCharacterRange: matches[0], in: container, storage: storage)
+        #expect(pills.count == 1 && pills[0].width > 10 && pills[0].height > 10)
+        #expect(storage.attribute(.backgroundColor, at: 18, effectiveRange: nil) == nil)
     }
 }
 
