@@ -197,6 +197,9 @@ struct MarkdownPreview: NSViewRepresentable {
 
         let tv = PreviewTextView(usingTextLayoutManager: false)
         tv.textContainer?.replaceLayoutManager(PillBackgroundLayoutManager())
+        // Laid out only where shown: a contiguous layout redoes the whole note whenever the width changes (switching
+        // the layout), which froze the app for seconds on notes below the huge-note threshold.
+        tv.layoutManager?.allowsNonContiguousLayout = true
         tv.isEditable = false
         tv.isSelectable = true
         tv.drawsBackground = false
@@ -379,8 +382,7 @@ struct MarkdownPreview: NSViewRepresentable {
             firstMatch = result.firstMatch
             sizedToWidth = result.sizedToWidth
             // A new storage: replacing the text of the current one copies the attribute runs one by one, which takes
-            // minutes for a huge note. Laid out only where shown, for the same reason.
-            lm.allowsNonContiguousLayout = result.text.length > Self.backgroundLength
+            // minutes for a huge note.
             lm.replaceTextStorage(result.text)
             if keepScroll, let scroll {
                 scroll.contentView.scroll(to: origin)
