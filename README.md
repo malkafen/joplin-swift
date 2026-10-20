@@ -59,12 +59,14 @@ Joplin Server account, after a minute of idling:
   - images from attachments and from the web (optional), scaled to the text width with rounded corners
   - diagrams drawn natively, no JavaScript: Mermaid flowcharts, state and sequence diagrams and pie charts, and
     draw.io diagrams (SVG from the Joplin draw.io plugin, `.drawio` files, ```` ```drawio ```` blocks)
-- **Vim mode** (View → Vim Mode, <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>V</kbd>): normal, insert, visual and
-  visual-line modes with counts; motions `h j k l w b e W B E 0 ^ $ gg G f F t T ; , { } ⌃D ⌃U`, operators
-  `d c y > < ~` with motions, doubled for lines and in visual mode, `x X D C Y s S r J p P o O i a I A u ⌃R`.
-  Search with `/ ? n N * #` lights every match as you type (smartcase: lower-case ignores case) and keeps them lit
-  until <kbd>Esc</kbd> or `:noh`; `:42` goes to a line. The mode and the command line are shown in the editor's
-  bottom corners. Commands work the same with a non-Latin keyboard layout (e.g. Russian).
+- **Vim mode** (View → Vim Mode, <kbd>⌃</kbd><kbd>⌥</kbd><kbd>⌘</kbd><kbd>V</kbd>): Vim navigation on top of the
+  native editor. Normal mode with counts and the motions `h j k l w b e W B E 0 ^ $ gg G f F t T ; , { } + - ⌃D ⌃U`;
+  `i a I A o O` start typing, <kbd>Esc</kbd> returns. Search uses the system find bar: `/` and `?` open it, `n` and `N`
+  go to the next and previous match. Editing, undo and the clipboard are the usual macOS ones. The mode is shown in
+  the editor's corner; commands work the same with a non-Latin keyboard layout (e.g. Russian).
+- **Huge notes** (hundreds of thousands of lines) open at once: the editor shows the start and finishes loading off
+  the main thread, Markdown is styled only around what is on screen, and switching between editor, split and preview
+  keeps both views alive, so it does not reload the note.
 - **Custom shortcuts**: Settings → Shortcuts changes (or removes) the shortcuts of the editor layouts and warns
   about clashes with other commands. Shortcuts are recorded by physical key, so they work in any keyboard layout;
   F1–F12 can be used too.
@@ -196,7 +198,7 @@ Environment variables for scripted checks, for example over SSH (no screen-recor
 | `JN_SEARCH=word` | Start with this search |
 | `JN_VIM=1` | Turn on Vim mode |
 | `JN_EXPAND_ALL=1` | Expand all notebooks |
-| `JN_VIM_KEYS=$'/word\n'` | Type these keys into the Vim editor before the snapshot (a newline is Return) |
+| `JN_VIM_KEYS=Gkk` | Type these normal-mode keys into the Vim editor before the snapshot |
 | `JN_SIDEBAR_SCROLL=N` | Scroll the sidebar N points down before the snapshot |
 | `JN_LAYOUT=split` | Start in the `editor`, `split` or `preview` layout |
 | `JN_APPEARANCE=dark` | Force the `dark` or `light` appearance |

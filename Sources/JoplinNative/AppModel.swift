@@ -219,17 +219,12 @@ final class AppModel {
     var vimMode = false {
         didSet {
             defaults.set(vimMode, forKey: "vimMode")
-            if !vimMode {
-                vimState = .insert
-                vimCommandLine = ""
-            }
+            if !vimMode { vimState = .insert }
         }
     }
 
     /// Mode shown in the editor's status label.
     var vimState: VimEngine.Mode = .normal
-    /// Vim's command line: the search being typed, the match count or an error.
-    var vimCommandLine = ""
 
     /// Whether notebooks in the trash are listed under it in the sidebar.
     var trashExpanded = false {
@@ -524,7 +519,8 @@ final class AppModel {
     }
 
     private func loadSelection() {
-        flushSave()
+        // The note left is saved in the background; reading it again waits for that (`loadNote`).
+        saveInBackground()
         // ⌘G / ⇧⌘G in the editor then step through the matches, as after a Find.
         if let term = searchTerms.first, selectedNoteIDs.count == 1 {
             findPasteboard.clearContents()
@@ -544,11 +540,10 @@ final class AppModel {
     @ObservationIgnored private var loadedStamp: (id: String, stamp: Store.BodyStamp)?
 
     private func loadNote(_ id: String) -> Note? {
-        // Read first: a change written in between makes the body look outdated, not the other way round.
-        let stamp = store.bodyStamp(id: id)
-        let note = store.note(id: id)
-        loadedStamp = stamp.map { (id, $0) }
-        return note
+        if savingNotes[id] != nil { waitForSaves() }
+        let loaded = store.noteAndStamp(id: id)
+        loadedStamp = loaded.map { (id, $0.stamp) }
+        return loaded?.note
     }
 
     private func refreshCurrentNote() {
@@ -598,6 +593,27 @@ final class AppModel {
         scheduleSave()
     }
 
+    /// Bumped when the editor changes the body. The note is changed without telling the observers of `currentNote`:
+    /// the note's view, the note list and the menus would be rebuilt on every keystroke. Only the preview follows.
+    private(set) var bodyRevision = 0
+    /// The list shows the edited note's summary once it is saved.
+    @ObservationIgnored private var summaryOutdated = false
+
+    /// A change typed in the editor.
+    func editBody(_ body: String) {
+        guard storedNote != nil else { return }
+        storedNote!.body = body
+        bodyRevision += 1
+        summaryOutdated = true
+        scheduleSave()
+    }
+
+    private func patchOutdatedSummary(_ note: Note) {
+        guard summaryOutdated else { return }
+        summaryOutdated = false
+        patchSummary(note)
+    }
+
     private func patchSummary(_ note: Note) {
         guard let i = notes.firstIndex(where: { $0.id == note.id }) else { return }
         notes[i].title = note.title
@@ -620,11 +636,17 @@ final class AppModel {
     @ObservationIgnored private let saveQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.save", qos: .userInitiated)
     @ObservationIgnored private lazy var writer: SQLiteDB? = try? store.makeWriter()
 
+    /// Notes with a background save not yet reported back, and how many.
+    @ObservationIgnored private var savingNotes: [String: Int] = [:]
+
     private func saveInBackground() {
+        saveTask?.cancel()
         saveTask = nil
         guard pendingSave, let note = currentNote else { return }
         guard let writer else { return flushSave() }
         pendingSave = false
+        patchOutdatedSummary(note)
+        savingNotes[note.id, default: 0] += 1
         nonisolated(unsafe) let db = writer
         saveQueue.async { [weak self] in
             var failure: String?
@@ -634,6 +656,7 @@ final class AppModel {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
+                    if let count = self.savingNotes[note.id] { self.savingNotes[note.id] = count > 1 ? count - 1 : nil }
                     if let failure {
                         self.alert = AlertInfo(title: "Error", message: failure)
                     } else {
@@ -656,6 +679,7 @@ final class AppModel {
         waitForSaves()
         guard pendingSave, let note = currentNote else { return }
         pendingSave = false
+        patchOutdatedSummary(note)
         let time = Store.now()
         perform {
             try store.saveNote(note, at: time)

@@ -169,15 +169,18 @@ struct MarkdownPreview: NSViewRepresentable {
     var markdown: String { box.string }
     var noteId: String
     var renderer: MarkdownRenderer
+    /// A collapsed preview renders when it is shown again, not on every change.
+    var isShown = true
     var readableWidth: Bool
     var highlights: [String] = []
     var onLink: (URL) -> Void
 
-    init(markdown: String, noteId: String, renderer: MarkdownRenderer, readableWidth: Bool, highlights: [String] = [],
-         onLink: @escaping (URL) -> Void) {
+    init(markdown: String, noteId: String, renderer: MarkdownRenderer, isShown: Bool = true, readableWidth: Bool,
+         highlights: [String] = [], onLink: @escaping (URL) -> Void) {
         box = TextBox(markdown)
         self.noteId = noteId
         self.renderer = renderer
+        self.isShown = isShown
         self.readableWidth = readableWidth
         self.highlights = highlights
         self.onLink = onLink
@@ -223,6 +226,7 @@ struct MarkdownPreview: NSViewRepresentable {
         c.renderer = renderer
         guard let tv = c.textView else { return }
         tv.maxLineWidth = readableWidth ? renderer.typography.readableWidth : nil
+        guard isShown else { return }
         let style = "\(renderer.typography)|\(renderer.loadsRemoteImages)|\(highlights)"
         guard c.renderedStyle != style || !c.markdown.isLiterally(markdown) || c.noteId != noteId else { return }
         let sameNote = c.noteId == noteId
@@ -298,7 +302,7 @@ struct MarkdownPreview: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
         }
 
-        /// Notes longer than this (in UTF-16 units) render off the main thread, their start shown meanwhile:
+        /// Notes longer than this (`quickLength`) render off the main thread, their start shown meanwhile:
         /// rendering a huge note takes seconds.
         static let backgroundLength = 200_000
         private var sizedToWidth = true
@@ -310,25 +314,21 @@ struct MarkdownPreview: NSViewRepresentable {
         private let renderQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.preview", qos: .userInitiated)
 
         private struct Rendered: @unchecked Sendable {
-            var text: NSAttributedString
+            /// Made where the note is rendered: copying a huge rendering takes a while.
+            var text: NSTextStorage
             var firstMatch: NSRange?
             var sizedToWidth: Bool
         }
 
-        private static func rendered(_ markdown: String, _ renderer: MarkdownRenderer, width: CGFloat, highlights: [String]) -> Rendered {
+        nonisolated private static func rendered(_ markdown: String, _ renderer: MarkdownRenderer, width: CGFloat, highlights: [String]) -> Rendered {
             let document = renderer.renderDocument(markdown, maxImageWidth: width)
-            let text = document.text as? NSMutableAttributedString ?? NSMutableAttributedString(attributedString: document.text)
+            let text = NSTextStorage(attributedString: document.text)
             let match = SearchHighlight.apply(highlights, to: text)
             return Rendered(text: text, firstMatch: match, sizedToWidth: document.sizedToWidth)
         }
 
         /// The first paragraphs of a long note.
-        static func start(of markdown: String) -> String {
-            let ns = markdown as NSString
-            let limit = min(ns.length, 20_000)
-            let cut = ns.range(of: "\n\n", options: .backwards, range: NSRange(location: 0, length: limit)).location
-            return ns.substring(to: cut == NSNotFound ? limit : cut)
-        }
+        static func start(of markdown: String) -> String { markdown.leadingParagraphs(limit: 20_000) }
 
         func render(keepScroll: Bool, reveal: Bool = false) {
             pendingRender?.cancel()
@@ -337,7 +337,7 @@ struct MarkdownPreview: NSViewRepresentable {
             generation += 1
             renderedWidth = imageWidth
             let markdown = self.markdown, highlights = self.highlights, width = renderedWidth
-            guard (markdown as NSString).length > Self.backgroundLength else {
+            guard markdown.quickLength > Self.backgroundLength else {
                 show(Self.rendered(markdown, renderer, width: width, highlights: highlights), keepScroll: keepScroll, reveal: reveal)
                 return
             }
@@ -353,7 +353,7 @@ struct MarkdownPreview: NSViewRepresentable {
                 let loader = RemoteImageLoader.shared
                 renderer.remoteImage = { loader.imageOffMain(for: $0) }
             }
-            nonisolated(unsafe) let background = renderer
+            let background = renderer
             let token = generation
             renderQueue.async { [weak self] in
                 let result = Self.rendered(markdown, background, width: width, highlights: highlights)
@@ -381,7 +381,7 @@ struct MarkdownPreview: NSViewRepresentable {
             // A new storage: replacing the text of the current one copies the attribute runs one by one, which takes
             // minutes for a huge note. Laid out only where shown, for the same reason.
             lm.allowsNonContiguousLayout = result.text.length > Self.backgroundLength
-            lm.replaceTextStorage(NSTextStorage(attributedString: result.text))
+            lm.replaceTextStorage(result.text)
             if keepScroll, let scroll {
                 scroll.contentView.scroll(to: origin)
                 scroll.reflectScrolledClipView(scroll.contentView)
@@ -410,6 +410,103 @@ struct MarkdownPreview: NSViewRepresentable {
             }
             onLink(url)
             return true
+        }
+    }
+}
+
+/// Editor and preview in a native split view. Changing the layout collapses a pane instead of replacing the views:
+/// loading a huge note into a new editor or preview takes a noticeable time, switching should not.
+struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
+    var layout: EditorLayout
+    var editor: Editor
+    var preview: Preview
+
+    func makeCoordinator() -> Coordinator { Coordinator(editor: editor, preview: preview) }
+
+    func makeNSView(context: Context) -> NSSplitView {
+        let split = NSSplitView()
+        split.isVertical = true
+        split.dividerStyle = .thin
+        split.delegate = context.coordinator
+        split.addArrangedSubview(context.coordinator.editor)
+        split.addArrangedSubview(context.coordinator.preview)
+        context.coordinator.split = split
+        context.coordinator.apply(layout)
+        return split
+    }
+
+    func updateNSView(_ split: NSSplitView, context: Context) {
+        let c = context.coordinator
+        c.editor.rootView = editor
+        c.preview.rootView = preview
+        c.apply(layout)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject, NSSplitViewDelegate {
+        let editor: NSHostingView<Editor>
+        let preview: NSHostingView<Preview>
+        weak var split: NSSplitView?
+        private var layout: EditorLayout?
+        /// Share of the width the editor takes in the split layout, as last dragged.
+        private var fraction: CGFloat = 0.5
+        static var minimumWidth: CGFloat { 220 }
+
+        init(editor: Editor, preview: Preview) {
+            self.editor = NSHostingView(rootView: editor)
+            self.preview = NSHostingView(rootView: preview)
+            // The panes take the size the split view gives them.
+            self.editor.sizingOptions = []
+            self.preview.sizingOptions = []
+        }
+
+        func apply(_ new: EditorLayout) {
+            guard new != layout, let split else { return }
+            let old = layout
+            layout = new
+            let window = split.window
+            // Keys go to the pane that stays visible, not to a hidden text view.
+            let focused = (window?.firstResponder as? NSView).map { $0.isDescendant(of: split) } ?? false
+            editor.isHidden = new == .preview
+            preview.isHidden = new == .editor
+            split.adjustSubviews()
+            if new == .split { place() }
+            guard focused || old == nil, let window else { return }
+            if let tv = textView(in: new == .preview ? preview : editor) {
+                window.makeFirstResponder(tv)
+            }
+        }
+
+        private func place() {
+            guard let split, split.bounds.width > 0 else { return }
+            split.setPosition((split.bounds.width * fraction).rounded(), ofDividerAt: 0)
+        }
+
+        private func textView(in view: NSView) -> NSTextView? {
+            if let tv = view as? NSTextView { return tv }
+            for sub in view.subviews { if let tv = textView(in: sub) { return tv } }
+            return nil
+        }
+
+        func splitView(_ splitView: NSSplitView, shouldHideDividerAt dividerIndex: Int) -> Bool {
+            layout != .split
+        }
+
+        func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposedMinimumPosition: CGFloat,
+                       ofSubviewAt dividerIndex: Int) -> CGFloat {
+            max(proposedMinimumPosition, Self.minimumWidth)
+        }
+
+        func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposedMaximumPosition: CGFloat,
+                       ofSubviewAt dividerIndex: Int) -> CGFloat {
+            min(proposedMaximumPosition, splitView.bounds.width - Self.minimumWidth)
+        }
+
+        func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
+
+        func splitViewDidResizeSubviews(_ notification: Notification) {
+            guard layout == .split, let split, split.bounds.width > 0, !editor.isHidden, !preview.isHidden else { return }
+            fraction = editor.frame.width / split.bounds.width
         }
     }
 }

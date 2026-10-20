@@ -155,83 +155,26 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
 
     private func cursor(_ tv: NSTextView) -> Int { tv.selectedRange().location }
 
-    @Test func search() throws {
+    /// "/" opens the system find bar, n and N step through its matches.
+    @Test func searchUsesTheFindBar() {
         let (tv, vim, window) = setup("foo bar\nFoo food\nbar foo")
         defer { window.close() }
-        // Typing lights every match and moves to the next one; Enter keeps them lit.
-        keys(vim, "/fo")
-        #expect(vim.commandLine == "/fo")
-        #expect(cursor(tv) == 8) // lower-case pattern ignores case
-        #expect(vim.highlightedRanges.count == 4)
-        keys(vim, "o\r")
-        #expect(vim.commandLine == "/foo  [2/4]")
-        #expect(vim.highlightedRanges.count == 4)
-        let lm = try #require(tv.layoutManager)
-        #expect(lm.temporaryAttribute(.backgroundColor, atCharacterIndex: 13, effectiveRange: nil) != nil)
-        #expect(lm.temporaryAttribute(.backgroundColor, atCharacterIndex: 5, effectiveRange: nil) == nil)
-        keys(vim, "n"); #expect(cursor(tv) == 12)
-        keys(vim, "n"); #expect(cursor(tv) == 21)
-        keys(vim, "n"); #expect(cursor(tv) == 0)
-        #expect(vim.commandLine.hasSuffix("search hit BOTTOM, continuing at TOP"))
-        keys(vim, "N"); #expect(cursor(tv) == 21)
-        keys(vim, "2n"); #expect(cursor(tv) == 8)
-        // Upper case makes the search case-sensitive (smartcase).
-        keys(vim, "/Foo\r"); #expect(cursor(tv) == 8)
-        #expect(vim.commandLine.hasPrefix("/Foo  [1/1]"))
-        keys(vim, "?bar\r"); #expect(cursor(tv) == 4)
-        keys(vim, "n"); #expect(cursor(tv) == 17) // "?" searches backwards and wraps
-        // Esc while typing goes back to where the search started.
-        keys(vim, "/zzz"); #expect(vim.highlightedRanges.isEmpty)
-        keys(vim, "\u{1B}"); #expect(cursor(tv) == 17)
-        #expect(vim.highlightedRanges.count == 2)
-        keys(vim, "/zzz\r")
-        #expect(vim.commandLine == "E486: Pattern not found: zzz")
-        #expect(VimEngine.isError(vim.commandLine))
-        // "*" matches the whole word under the cursor.
-        keys(vim, "gg*"); #expect(cursor(tv) == 8)
-        #expect(vim.highlightedRanges.count == 3) // not "food"
-        keys(vim, "#"); #expect(cursor(tv) == 0)
-        // Edits keep the highlights in step; Esc and :noh hide them.
-        keys(vim, "ifoo \u{1B}")
-        #expect(vim.highlightedRanges.count == 4)
-        keys(vim, "\u{1B}"); #expect(vim.highlightedRanges.isEmpty)
-        keys(vim, "n"); #expect(vim.highlightedRanges.count == 4)
-        keys(vim, ":noh\r"); #expect(vim.highlightedRanges.isEmpty)
-        // ":3" goes to line 3, unknown commands report an error.
-        keys(vim, ":3\r"); #expect(cursor(tv) == 21)
-        keys(vim, ":nope\r"); #expect(vim.commandLine == "E492: Not an editor command: nope")
-        // Highlights never become part of the text's attributes.
-        #expect(tv.textStorage?.attribute(.backgroundColor, at: 9, effectiveRange: nil) == nil)
-    }
-
-    @Test func highlightsArePaintedAroundTheVisibleText() throws {
-        _ = NSApplication.shared
-        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 400, height: 300), styleMask: [.titled], backing: .buffered, defer: false)
-        window.isReleasedWhenClosed = false
-        defer { window.close() }
         let scroll = NSScrollView(frame: window.contentView!.bounds)
-        let tv = MarkdownTextView(frame: scroll.bounds)
-        tv.isVerticallyResizable = true
-        tv.autoresizingMask = [.width]
+        tv.removeFromSuperview()
         scroll.documentView = tv
         window.contentView?.addSubview(scroll)
-        tv.string = String(repeating: "foo line\n", count: 2_000)
-        let vim = VimEngine(textView: tv)
-        tv.vim = vim
-        vim.paintMargin = 200
-        vim.reset()
-        let lm = try #require(tv.layoutManager)
-        func lit(_ i: Int) -> Bool { lm.temporaryAttribute(.backgroundColor, atCharacterIndex: i, effectiveRange: nil) != nil }
-        let last = (tv.string as NSString).length - 9
-
-        keys(vim, "/foo\r")
-        #expect(vim.highlightedRanges.count == 2_000)
-        #expect(lit(9) && !lit(last))
-        keys(vim, "G")
-        vim.viewportChanged()
-        #expect(lit(last) && !lit(9))
-        keys(vim, ":noh\r")
-        #expect(!lit(last))
+        tv.usesFindBar = true
+        window.makeFirstResponder(tv)
+        keys(vim, "/")
+        #expect(scroll.isFindBarVisible)
+        let pasteboard = NSPasteboard(name: .find)
+        pasteboard.clearContents()
+        pasteboard.setString("bar", forType: .string)
+        window.makeFirstResponder(tv)
+        keys(vim, "n"); #expect(tv.selectedRange() == NSRange(location: 4, length: 1))
+        keys(vim, "n"); #expect(cursor(tv) == 17)
+        keys(vim, "N"); #expect(cursor(tv) == 4)
+        #expect(vim.mode == .normal)
     }
 
     @Test func verticalMotionsStopAtTheEnds() {
@@ -246,7 +189,7 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         keys(vim, "k"); #expect(cursor(tv) == 2)
         keys(vim, "3G"); #expect(cursor(tv) == 7)
         keys(vim, "9G"); #expect(cursor(tv) == 13)
-        keys(vim, "gg2dj"); #expect(tv.string == "fghi\nj")
+        keys(vim, "gg"); #expect(cursor(tv) == 0)
     }
 
     @Test func motions() {
@@ -287,92 +230,20 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         keys(vim, "-"); #expect(cursor(tv) == 0)
     }
 
-    @Test func operators() {
-        let (tv, vim, window) = setup("alpha beta gamma\nsecond\nthird")
+    @Test func startingToType() {
+        let (tv, vim, window) = setup("  ab\ncd")
         defer { window.close() }
-        keys(vim, "dw"); #expect(tv.string.hasPrefix("beta gamma"))
-        keys(vim, "u"); #expect(tv.string.hasPrefix("alpha beta"))
-        vim.handle(key: "\u{12}"); #expect(tv.string.hasPrefix("beta gamma"))
-        keys(vim, "u")
-        keys(vim, "w")
-        keys(vim, "cwBETA\u{1B}"); #expect(tv.string.hasPrefix("alpha BETA gamma"))
-        #expect(vim.mode == .normal)
-        keys(vim, "wde"); #expect(tv.string.hasPrefix("alpha BETA \n"))
-        keys(vim, "0d$"); #expect(tv.string.hasPrefix("\nsecond"))
-        keys(vim, "u"); #expect(tv.string.hasPrefix("alpha BETA \n"))
-        keys(vim, "yy"); #expect(vim.register == "alpha BETA \n" && vim.registerLinewise)
-        keys(vim, "jp"); #expect(tv.string == "alpha BETA \nsecond\nalpha BETA \nthird")
-        keys(vim, "dd"); #expect(tv.string == "alpha BETA \nsecond\nthird")
-        keys(vim, "P"); #expect(tv.string == "alpha BETA \nsecond\nalpha BETA \nthird")
-        keys(vim, "2dd"); #expect(tv.string == "alpha BETA \nsecond")
-        keys(vim, "dd"); #expect(tv.string == "alpha BETA ")
-        keys(vim, "x"); #expect(tv.string == "lpha BETA ")
-        keys(vim, "p"); #expect(tv.string == "lapha BETA ")
-        keys(vim, "$X"); #expect(tv.string == "lapha BET ")
-        keys(vim, "0yw"); #expect(vim.register == "lapha ")
-        keys(vim, "D"); #expect(tv.string == "")
-        tv.string = "abc def\nxyz"
-        vim.reset()
-        tv.setSelectedRange(NSRange(location: 0, length: 1))
-        keys(vim, "C!\u{1B}"); #expect(tv.string == "!\nxyz")
-        keys(vim, "jS  new\u{1B}"); #expect(tv.string == "!\n  new")
-        keys(vim, "cc\u{1B}"); #expect(tv.string == "!\n  ")
-        keys(vim, "ggdG"); #expect(tv.string == "")
+        keys(vim, "A"); #expect(vim.mode == .insert); #expect(cursor(tv) == 4)
+        keys(vim, "\u{1B}"); #expect(cursor(tv) == 3)
+        keys(vim, "o"); #expect(tv.string == "  ab\n  \ncd"); #expect(cursor(tv) == 7)
+        keys(vim, "x\u{1B}O"); #expect(tv.string == "  ab\n  \n  x\ncd"); #expect(cursor(tv) == 7)
+        keys(vim, "\u{1B}ggI"); #expect(cursor(tv) == 2)
+        keys(vim, "\u{1B}0a"); #expect(cursor(tv) == 1)
+        keys(vim, "\u{1B}"); #expect(vim.mode == .normal)
+        tv.isEditable = false
+        keys(vim, "o"); #expect(tv.string == "  ab\n  \n  x\ncd") // read-only: nothing to type into
     }
 
-    @Test func editingCommands() {
-        let (tv, vim, window) = setup("hello world\n  indented")
-        defer { window.close() }
-        keys(vim, "rJ"); #expect(tv.string.hasPrefix("Jello"))
-        keys(vim, "3~"); #expect(tv.string.hasPrefix("jELlo"))
-        keys(vim, "J"); #expect(tv.string == "jELlo world indented")
-        keys(vim, "u")
-        keys(vim, "A!\u{1B}"); #expect(tv.string.hasPrefix("jELlo world!"))
-        keys(vim, "I> \u{1B}"); #expect(tv.string.hasPrefix("> jELlo"))
-        keys(vim, "j0a-\u{1B}"); #expect(tv.string.hasSuffix("\n - indented"))
-        keys(vim, "o- item\u{1B}"); #expect(tv.string.hasSuffix("\n - item")) // keeps the indentation
-        keys(vim, "Otop\u{1B}"); #expect(tv.string.contains("\n top\n - item"))
-        keys(vim, ">>"); #expect(tv.string.contains("\n     top"))
-        keys(vim, "<<"); #expect(tv.string.contains("\n top"))
-        keys(vim, "ggs#\u{1B}"); #expect(tv.string.hasPrefix("#"))
-        keys(vim, "ix\u{1B}"); #expect(tv.string.hasPrefix("x#"))
-        let before = tv.string
-        keys(vim, "dtX") // not found: no change
-        #expect(tv.string == before)
-        keys(vim, "0d2fl") // up to and including the second "l"
-        #expect(tv.string.hasPrefix("d!"))
-        keys(vim, "jdgg") // linewise to the top
-        #expect(tv.string.hasPrefix(" top"))
-    }
-
-    @Test func visualModes() {
-        let (tv, vim, window) = setup("one two three\nfour five\nsix")
-        defer { window.close() }
-        keys(vim, "vw"); #expect(vim.mode == .visual)
-        #expect(tv.selectedRange() == NSRange(location: 0, length: 5))
-        keys(vim, "o"); keys(vim, "o")
-        keys(vim, "y"); #expect(vim.register == "one t" && vim.mode == .normal)
-        keys(vim, "vex"); #expect(tv.string.hasPrefix(" two"))
-        keys(vim, "u0")
-        keys(vim, "Vj"); #expect(vim.mode == .visualLine)
-        #expect(tv.selectedRange() == NSRange(location: 0, length: 24))
-        keys(vim, "d"); #expect(tv.string == "six")
-        keys(vim, "u")
-        keys(vim, "vlU"); #expect(tv.string.hasPrefix("ONe"))
-        keys(vim, "vlu"); #expect(tv.string.hasPrefix("one"))
-        keys(vim, "vl~"); #expect(tv.string.hasPrefix("ONe"))
-        keys(vim, "Vjc\u{1B}"); #expect(tv.string.hasPrefix("\nsix") || tv.string.hasPrefix("\n"))
-        keys(vim, "u")
-        keys(vim, "V>"); #expect(tv.string.hasPrefix("    "))
-        keys(vim, "V<"); #expect(!tv.string.hasPrefix(" "))
-        keys(vim, "yyjVp"); #expect(tv.string.components(separatedBy: "\n").count == 3)
-        keys(vim, "vs!\u{1B}")
-        keys(vim, "v\u{1B}"); #expect(vim.mode == .normal)
-        keys(vim, "V"); keys(vim, "V"); #expect(vim.mode == .normal)
-    }
-
-    /// With the Russian layout active the command keys still work by position; f, t, r and the search take the
-    /// Cyrillic characters themselves.
     @Test func commandsWithANonLatinLayout() {
         let (tv, vim, window) = setup("один\nдва\nтри")
         defer { window.close() }
@@ -383,9 +254,8 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         #expect(vim.handle(keyEvent("а", keyCode: 3))) // f…
         #expect(vim.handle(keyEvent("а", keyCode: 3))) // …а: the argument stays Cyrillic
         #expect(cursor(tv) == 7)
-        #expect(vim.handle(keyEvent("в", keyCode: 2))) // d
-        #expect(vim.handle(keyEvent("в", keyCode: 2))) // dd
-        #expect(tv.string == "один\nтри")
+        #expect(vim.handle(keyEvent("в", keyCode: 2))) // d is not a command: nothing changes
+        #expect(tv.string == "один\nдва\nтри")
         #expect(vim.handle(keyEvent("\u{04}", keyCode: 2, flags: .control, ignoring: "в"))) // ⌃D
         #expect(vim.handle(keyEvent("\u{1B}", keyCode: 33, flags: .control, ignoring: "х"))) // ⌃[ is Esc
         #expect(vim.mode == .normal)
@@ -423,22 +293,15 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         #expect(vim.handle(keyEvent("\r", keyCode: 36)))
         #expect(cursor(tv) == 4)
         #expect(modes.contains(.insert) && modes.contains(.normal))
-        #expect(VimEngine.Mode.visualLine.label == "VISUAL LINE")
+        #expect(VimEngine.Mode.insert.label == "INSERT")
         tv.setSelectedRange(NSRange(location: 2, length: 0))
         vim.normalizeSelection()
         #expect(tv.selectedRange().length == 1)
-        // The command line takes typed keys, Backspace, ⌘ shortcuts pass through, Esc closes it.
-        #expect(vim.handle(keyEvent("/", keyCode: 44)))
-        #expect(vim.handle(keyEvent("q", keyCode: 12)))
-        #expect(vim.commandLine == "/q")
-        #expect(vim.handle(keyEvent("\u{7F}", keyCode: 51)))
-        #expect(vim.commandLine == "/")
-        #expect(!vim.handle(keyEvent("s", keyCode: 1, flags: .command)))
-        #expect(vim.handle(keyEvent("\u{1B}", keyCode: 53)))
-        #expect(vim.commandLine.isEmpty)
         // The text view routes keys through the engine.
         (tv as? MarkdownTextView)?.keyDown(with: keyEvent("x", keyCode: 7))
-        #expect(tv.string.count == 6)
+        #expect(tv.string == "abc\ndef") // not a command, not typed either
+        (tv as? MarkdownTextView)?.keyDown(with: keyEvent("h", keyCode: 4))
+        #expect(cursor(tv) == 1)
     }
 }
 

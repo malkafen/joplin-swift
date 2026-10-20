@@ -612,3 +612,41 @@ import Testing
         #expect(EditorLayout.split.id == "split")
     }
 }
+
+@MainActor
+@Suite struct EditorTypingTests {
+    /// Typing changes the note without rebuilding the views that observe it; the list follows once it is saved.
+    @Test func typedChangesDoNotNotifyTheNoteObservers() throws {
+        let h = try ModelHarness()
+        let model = h.model
+        let id = try #require(model.currentNote?.id)
+        final class Flag: @unchecked Sendable { var raised = false }
+        let noteChanged = Flag(), revisionChanged = Flag()
+        withObservationTracking { _ = model.currentNote } onChange: { noteChanged.raised = true }
+        withObservationTracking { _ = model.bodyRevision } onChange: { revisionChanged.raised = true }
+        model.editBody("typed body")
+        #expect(!noteChanged.raised)
+        #expect(revisionChanged.raised)
+        #expect(model.currentNote?.body == "typed body")
+        #expect(model.notes.first { $0.id == id }?.snippet != "typed body")
+        model.flushSave()
+        #expect(h.store.note(id: id)?.body == "typed body")
+        #expect(model.notes.first { $0.id == id }?.snippet == "typed body")
+    }
+
+    /// The note left is saved in the background; coming back to it reads the saved text.
+    @Test func switchingNotesRightAfterTypingKeepsTheText() throws {
+        let h = try ModelHarness()
+        let model = h.model
+        let first = try #require(model.currentNote?.id)
+        let other = try h.store.createNote(parentId: model.currentNote!.parentId, title: "Other", body: "other")
+        model.reloadNotes(selectFirst: false)
+        model.editBody("typed just before leaving")
+        model.selectedNoteIDs = [other.id]
+        #expect(model.currentNote?.id == other.id)
+        model.selectedNoteIDs = [first]
+        #expect(model.currentNote?.body == "typed just before leaving")
+        model.flushSave()
+        #expect(h.store.note(id: first)?.body == "typed just before leaving")
+    }
+}
