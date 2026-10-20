@@ -101,8 +101,11 @@ enum SearchHighlight {
 
     /// Ranges of all terms in `string`, ignoring case and diacritics, in text order.
     static func ranges(of terms: [String], in string: String, range: NSRange? = nil, limit: Int = .max) -> [NSRange] {
-        guard !terms.isEmpty, !string.isEmpty else { return [] }
-        let ns = string as NSString
+        ranges(of: terms, in: string as NSString, range: range, limit: limit)
+    }
+
+    static func ranges(of terms: [String], in ns: NSString, range: NSRange? = nil, limit: Int = .max) -> [NSRange] {
+        guard !terms.isEmpty, ns.length > 0 else { return [] }
         let scope = range ?? NSRange(location: 0, length: ns.length)
         var result: [NSRange] = []
         for term in terms {
@@ -118,13 +121,5 @@ enum SearchHighlight {
             }
         }
         return result.sorted { $0.location < $1.location }
-    }
-
-    /// Adds the highlight background to every match; returns the first match.
-    @discardableResult
-    static func apply(_ terms: [String], to text: NSMutableAttributedString) -> NSRange? {
-        let found = ranges(of: terms, in: text.string)
-        for r in found { text.addAttribute(.backgroundColor, value: color, range: r) }
-        return found.first
     }
 }

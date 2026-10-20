@@ -257,7 +257,7 @@ import Testing
         func check(_ markdown: String) {
             coordinator.markdown = markdown
             coordinator.render(keepScroll: true, incremental: true)
-            let full = MarkdownPreview.Coordinator.rendered(markdown, MarkdownRenderer(baseSize: 14) { _ in nil }, width: 640, highlights: [])
+            let full = MarkdownPreview.Coordinator.rendered(markdown, MarkdownRenderer(baseSize: 14) { _ in nil }, width: 640)
             #expect(tv.textStorage === storage)
             #expect(tv.string == full.text.string)
             func lines(_ s: NSAttributedString) -> [Int] {

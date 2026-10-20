@@ -72,9 +72,66 @@ extension ReadableWidth {
     }
 }
 
+/// Marks the words of the active search where text is drawn: marking them in the text storage edits and lays out
+/// a huge note again on every key of the search, which took seconds.
+class SearchMarkingLayoutManager: NSLayoutManager {
+    var searchTerms: [String] = [] {
+        didSet {
+            guard oldValue != searchTerms else { return }
+            // Only what is shown: invalidating the display of a whole note with tables takes long.
+            for container in textContainers {
+                if let tv = container.textView { tv.setNeedsDisplay(tv.visibleRect) }
+            }
+        }
+    }
+
+    override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
+        super.drawBackground(forGlyphRange: glyphsToShow, at: origin)
+        guard !searchTerms.isEmpty, let storage = textStorage, let container = textContainers.first else { return }
+        SearchHighlight.color.setFill()
+        for match in searchMatches(forGlyphRange: glyphsToShow) {
+            for pill in pills(forCharacterRange: match, in: container, storage: storage) {
+                NSBezierPath(roundedRect: pill.offsetBy(dx: origin.x, dy: origin.y), xRadius: 4, yRadius: 4).fill()
+            }
+        }
+    }
+
+    /// Matches of the search words in or crossing into `glyphs`.
+    func searchMatches(forGlyphRange glyphs: NSRange) -> [NSRange] {
+        guard !searchTerms.isEmpty, let storage = textStorage else { return [] }
+        let chars = characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
+        // A match ignoring case and diacritics can be longer than the word.
+        let reach = 2 * (searchTerms.map { ($0 as NSString).length }.max() ?? 0)
+        let from = max(0, chars.location - reach), to = min(storage.length, NSMaxRange(chars) + reach)
+        return SearchHighlight.ranges(of: searchTerms, in: storage.mutableString, range: NSRange(location: from, length: to - from))
+            .filter { NSIntersectionRange($0, chars).length > 0 }
+    }
+
+    /// Rounded backgrounds around the glyphs of `range` on each of its lines, in container coordinates.
+    func pills(forCharacterRange range: NSRange, in container: NSTextContainer, storage: NSTextStorage) -> [NSRect] {
+        let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+        var result: [NSRect] = []
+        var g = glyphs.location
+        while g < NSMaxRange(glyphs) {
+            var line = NSRange()
+            let fragment = lineFragmentRect(forGlyphAt: g, effectiveRange: &line)
+            let part = NSIntersectionRange(line, glyphs)
+            guard part.length > 0 else { break }
+            let rect = boundingRect(forGlyphRange: part, in: container)
+            let font = storage.attribute(.font, at: characterIndexForGlyph(at: part.location), effectiveRange: nil) as? NSFont
+                ?? NSFont.systemFont(ofSize: NSFont.systemFontSize)
+            let baseline = fragment.minY + location(forGlyphAt: line.location).y
+            result.append(NSRect(x: rect.minX - 1, y: baseline - font.ascender - 1.5,
+                                 width: rect.width + 2, height: font.ascender - font.descender + 3))
+            g = NSMaxRange(part)
+        }
+        return result
+    }
+}
+
 /// Draws text backgrounds (inline code, keys, highlights) as rounded pills around the glyphs instead of filling
 /// the whole line height, which looks heavy with generous line spacing.
-final class PillBackgroundLayoutManager: NSLayoutManager {
+final class PillBackgroundLayoutManager: SearchMarkingLayoutManager {
     private var origin = NSPoint.zero
 
     override func drawBackground(forGlyphRange glyphsToShow: NSRange, at origin: NSPoint) {
@@ -84,21 +141,28 @@ final class PillBackgroundLayoutManager: NSLayoutManager {
 
     override func fillBackgroundRectArray(_ rectArray: UnsafePointer<NSRect>, count rectCount: Int,
                                           forCharacterRange charRange: NSRange, color: NSColor) {
-        guard let storage = textStorage, let container = textContainers.first, charRange.location < storage.length,
+        guard let storage = textStorage, charRange.location < storage.length,
               storage.attribute(.backgroundColor, at: charRange.location, effectiveRange: nil) as? NSColor == color,
               let font = storage.attribute(.font, at: charRange.location, effectiveRange: nil) as? NSFont else {
             super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
             return
         }
+        // Baselines of the lines of the range: finding the line of each rect by its point is slow in tables.
+        var lines: [(fragment: NSRect, baseline: CGFloat)] = []
+        let glyphs = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
+        var g = glyphs.location
+        while g < NSMaxRange(glyphs) {
+            var line = NSRange()
+            let fragment = lineFragmentRect(forGlyphAt: g, effectiveRange: &line)
+            lines.append((fragment, fragment.minY + location(forGlyphAt: line.location).y))
+            g = max(g + 1, NSMaxRange(line))
+        }
         color.setFill()
         for i in 0..<rectCount {
             let r = rectArray[i]
-            // Baseline of the line this rect is on, in view coordinates.
-            let point = NSPoint(x: r.midX - origin.x, y: r.midY - origin.y)
-            let glyph = glyphIndex(for: point, in: container)
-            var fragmentGlyphs = NSRange()
-            let fragment = lineFragmentRect(forGlyphAt: glyph, effectiveRange: &fragmentGlyphs)
-            let baseline = origin.y + fragment.minY + location(forGlyphAt: fragmentGlyphs.location).y
+            let y = r.midY - origin.y
+            guard let line = lines.first(where: { $0.fragment.minY <= y && y < $0.fragment.maxY }) ?? lines.first else { continue }
+            let baseline = origin.y + line.baseline
             let pill = NSRect(x: r.minX - 2, y: baseline - font.ascender - 1.5,
                               width: r.width + 4, height: font.ascender - font.descender + 3)
             NSBezierPath(roundedRect: pill, xRadius: 4, yRadius: 4).fill()
@@ -265,17 +329,23 @@ struct MarkdownPreview: NSViewRepresentable {
         guard let tv = c.textView else { return }
         tv.maxLineWidth = readableWidth ? renderer.typography.readableWidth : nil
         guard isShown else { return }
-        let style = "\(renderer.typography)|\(renderer.loadsRemoteImages)|\(highlights)"
-        guard c.renderedStyle != style || !c.markdown.isLiterally(markdown) || c.noteId != noteId else { return }
-        let sameNote = c.noteId == noteId
+        // Search words are drawn over the text, not rendered into it.
         let newTerms = c.highlights != highlights
+        c.highlights = highlights
+        (tv.layoutManager as? SearchMarkingLayoutManager)?.searchTerms = highlights
+        let style = "\(renderer.typography)|\(renderer.loadsRemoteImages)"
+        guard c.renderedStyle != style || !c.markdown.isLiterally(markdown) || c.noteId != noteId else {
+            if newTerms { c.revealFirstMatch() }
+            return
+        }
+        let sameNote = c.noteId == noteId
         let typing = sameNote && c.renderedStyle == style
         c.markdown = markdown
-        c.highlights = highlights
         c.renderedStyle = style
         c.noteId = noteId
         if typing {
             c.renderSoon()
+            if newTerms { c.revealFirstMatch() }
             return
         }
         c.render(keepScroll: sameNote, reveal: !sameNote || newTerms)
@@ -292,7 +362,6 @@ struct MarkdownPreview: NSViewRepresentable {
         var renderer: MarkdownRenderer?
         var markdown = ""
         var highlights: [String] = []
-        private var firstMatch: NSRange?
         var renderedStyle = ""
         var noteId = ""
         private var renderedWidth: CGFloat = 0
@@ -356,7 +425,6 @@ struct MarkdownPreview: NSViewRepresentable {
         struct Rendered: @unchecked Sendable {
             /// Made where the note is rendered: copying a huge rendering takes a while.
             var text: NSTextStorage
-            var firstMatch: NSRange?
             var sizedToWidth: Bool
             var markdown: String
             var blocks: [RenderedBlock]
@@ -365,11 +433,9 @@ struct MarkdownPreview: NSViewRepresentable {
             var width: CGFloat
         }
 
-        nonisolated static func rendered(_ markdown: String, _ renderer: MarkdownRenderer, width: CGFloat, highlights: [String]) -> Rendered {
+        nonisolated static func rendered(_ markdown: String, _ renderer: MarkdownRenderer, width: CGFloat) -> Rendered {
             let document = renderer.renderDocument(markdown, maxImageWidth: width)
-            let text = NSTextStorage(attributedString: document.text)
-            let match = SearchHighlight.apply(highlights, to: text)
-            return Rendered(text: text, firstMatch: match, sizedToWidth: document.sizedToWidth, markdown: markdown,
+            return Rendered(text: NSTextStorage(attributedString: document.text), sizedToWidth: document.sizedToWidth, markdown: markdown,
                             blocks: document.blocks, headings: document.headings, hasTOC: document.hasTOC, width: width)
         }
 
@@ -438,14 +504,14 @@ struct MarkdownPreview: NSViewRepresentable {
             guard textView != nil, var renderer else { return }
             generation += 1
             renderedWidth = imageWidth
-            let markdown = self.markdown, highlights = self.highlights, width = renderedWidth
+            let markdown = self.markdown, width = renderedWidth
             guard markdown.quickLength > Self.backgroundLength else {
-                show(Self.rendered(markdown, renderer, width: width, highlights: highlights), keepScroll: keepScroll, reveal: reveal,
+                show(Self.rendered(markdown, renderer, width: width), keepScroll: keepScroll, reveal: reveal,
                      incremental: incremental)
                 return
             }
             if !keepScroll {
-                show(Self.rendered(Self.start(of: markdown), renderer, width: width, highlights: highlights), keepScroll: false, reveal: false)
+                show(Self.rendered(Self.start(of: markdown), renderer, width: width), keepScroll: false, reveal: false)
             }
             guard !rendering else {
                 renderAgain = ((renderAgain?.reveal ?? false) || reveal, (renderAgain?.incremental ?? true) && incremental)
@@ -459,7 +525,7 @@ struct MarkdownPreview: NSViewRepresentable {
             let background = renderer
             let token = generation
             renderQueue.async { [weak self] in
-                let result = Self.rendered(markdown, background, width: width, highlights: highlights)
+                let result = Self.rendered(markdown, background, width: width)
                 RunLoop.main.perform(inModes: [.common]) {
                     MainActor.assumeIsolated {
                         guard let self else { return }
@@ -477,7 +543,6 @@ struct MarkdownPreview: NSViewRepresentable {
         private func show(_ result: Rendered, keepScroll: Bool, reveal: Bool, incremental: Bool = false) {
             defer { lastRender = Date() }
             guard let tv = textView, let lm = tv.layoutManager else { return }
-            firstMatch = result.firstMatch
             sizedToWidth = result.sizedToWidth
             defer {
                 shown = result
@@ -504,8 +569,9 @@ struct MarkdownPreview: NSViewRepresentable {
 
         /// Scrolls the first search match into the middle of the view.
         func revealFirstMatch() {
-            guard let tv = textView, let match = firstMatch, let layoutManager = tv.layoutManager,
-                  let container = tv.textContainer, let scroll = tv.enclosingScrollView else { return }
+            guard let tv = textView, let storage = tv.textStorage, let layoutManager = tv.layoutManager,
+                  let container = tv.textContainer, let scroll = tv.enclosingScrollView,
+                  let match = SearchHighlight.ranges(of: highlights, in: storage.mutableString, limit: 1).first else { return }
             let glyphs = layoutManager.glyphRange(forCharacterRange: match, actualCharacterRange: nil)
             let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: container)
             let y = rect.midY + tv.textContainerOrigin.y - scroll.contentView.bounds.height / 3

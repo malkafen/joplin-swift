@@ -74,8 +74,8 @@ Joplin Server account, after a minute of idling:
   designs: SF Pro, New York, SF Rounded, SF Mono). <kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> /
   <kbd>⌘</kbd><kbd>0</kbd> scale the text. Lines are kept at a readable length in wide windows (optional).
 - **Layouts**: editor, preview, or side-by-side split (<kbd>⌃</kbd><kbd>L</kbd>)
-- **Search**: full-text search over all notes with SQLite FTS5, works for any language. The list shows the
-  text around the match; the words are highlighted in the list, the editor and the preview, the note scrolls to
+- **Search** (<kbd>⌘</kbd><kbd>L</kbd>): full-text search over all notes with SQLite FTS5, works for any language. The list shows the
+  text around the match; the words are highlighted in the list, the editor and the preview as you type, the note scrolls to
   the first match, and <kbd>⌘</kbd><kbd>G</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd> step through the matches
 - **Tags**: token field with completion of existing tags. Tags can be hidden in the sidebar
   (<kbd>⌃</kbd><kbd>⌘</kbd><kbd>T</kbd>, or collapse the section) and above notes (View menu or Settings).
@@ -100,7 +100,7 @@ Joplin Server account, after a minute of idling:
 | Synchronise | <kbd>⌘</kbd><kbd>S</kbd> | Highlight | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>H</kbd> |
 | Bigger / smaller text | <kbd>⌘</kbd><kbd>+</kbd> / <kbd>⌘</kbd><kbd>−</kbd> | Math formula | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>M</kbd> |
 | Show tags in sidebar | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>T</kbd> | Toggle sidebar | <kbd>⌃</kbd><kbd>⌘</kbd><kbd>S</kbd> |
-| Search all notes | <kbd>⌥</kbd><kbd>⌘</kbd><kbd>F</kbd> | Next / previous match | <kbd>⌘</kbd><kbd>G</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd> |
+| Search all notes | <kbd>⌘</kbd><kbd>L</kbd> | Next / previous match | <kbd>⌘</kbd><kbd>G</kbd> / <kbd>⇧</kbd><kbd>⌘</kbd><kbd>G</kbd> |
 | Next / previous note | <kbd>⌥</kbd><kbd>⌘</kbd><kbd>↓</kbd> / <kbd>↑</kbd> | Duplicate note | <kbd>⌘</kbd><kbd>D</kbd> |
 | Edit title | <kbd>⌥</kbd><kbd>⌘</kbd><kbd>R</kbd> | Edit tags | <kbd>⌥</kbd><kbd>⌘</kbd><kbd>K</kbd> |
 | Mark to-do as done | <kbd>⌘</kbd><kbd>↩</kbd> | Switch note / to-do | <kbd>⇧</kbd><kbd>⌘</kbd><kbd>D</kbd> |

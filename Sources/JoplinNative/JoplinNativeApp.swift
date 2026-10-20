@@ -61,7 +61,7 @@ struct AppCommands: Commands {
 
         CommandGroup(after: .textEditing) {
             Button("Search All Notes") { model.focusSearch() }
-                .keyboardShortcut("f", modifiers: [.command, .option])
+                .keyboardShortcut("l")
         }
 
         CommandGroup(replacing: .saveItem) {
