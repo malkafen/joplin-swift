@@ -31,7 +31,7 @@ xcrun vtool -set-build-version macos "${MIN_VERSION:-14.0}" "$SDK_VERSION" -repl
 mv "$APP/Contents/MacOS/$EXEC.tmp" "$APP/Contents/MacOS/$EXEC"
 for b in "$BIN"/*.bundle; do [ -e "$b" ] && cp -R "$b" "$APP/Contents/Resources/"; done
 
-if [ ! -f build/AppIcon.icns ] || [ Tools/make-icon.swift -nt build/AppIcon.icns ]; then
+if [ ! -f build/AppIcon.icns ] || [ Tools/make-icon.swift -nt build/AppIcon.icns ] || [ Tools/AppIcon.svg -nt build/AppIcon.icns ]; then
   rm -rf build/AppIcon.iconset
   swift Tools/make-icon.swift build/AppIcon.iconset
   iconutil -c icns build/AppIcon.iconset -o build/AppIcon.icns

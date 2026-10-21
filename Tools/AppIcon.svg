@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 512 512">
+<rect width="512" height="512" rx="114" fill="#101318"/>
+<rect x="142" y="130" width="200" height="252" rx="24" fill="#2A3040" transform="rotate(-14 242 256)"/>
+<rect x="150" y="128" width="200" height="252" rx="24" fill="#3A4256" transform="rotate(-5 250 254)"/>
+<g transform="rotate(5 262 250)">
+<rect x="162" y="124" width="200" height="252" rx="24" fill="#E6E9F0"/>
+<rect x="192" y="168" width="120" height="16" rx="8" fill="#4B5568"/>
+<rect x="192" y="210" width="140" height="11" rx="5.5" fill="#A3ACBB"/>
+<rect x="192" y="238" width="110" height="11" rx="5.5" fill="#A3ACBB"/>
+<rect x="192" y="266" width="128" height="11" rx="5.5" fill="#A3ACBB"/>
+</g>
+<circle cx="360" cy="372" r="64" fill="#F59E0B" stroke="#101318" stroke-width="10"/>
+<path d="M330 366 A31 31 0 0 1 386 350" stroke="#101318" stroke-width="11" stroke-linecap="round" fill="none"/>
+<polyline points="372,340 388,350 380,367" stroke="#101318" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+<path d="M390 378 A31 31 0 0 1 334 394" stroke="#101318" stroke-width="11" stroke-linecap="round" fill="none"/>
+<polyline points="348,404 332,394 340,377" stroke="#101318" stroke-width="11" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+</svg>

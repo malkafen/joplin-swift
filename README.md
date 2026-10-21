@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/icon.png" alt="Joplin Native icon: sheet music with a gold note above piano keys" width="128">
+<img src="docs/icon.png" alt="Joplin Native icon: a stack of notes with an orange sync badge on a dark background" width="128">
 
 # Joplin Native
 
