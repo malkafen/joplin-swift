@@ -460,6 +460,9 @@ struct MarkdownPreview: NSViewRepresentable {
         tv.layoutManager?.allowsNonContiguousLayout = true
         tv.isEditable = false
         tv.isSelectable = true
+        // ⌘F finds in the preview too, in the same bar as in the editor.
+        tv.usesFindBar = true
+        tv.isIncrementalSearchingEnabled = true
         tv.drawsBackground = false
         tv.isVerticallyResizable = true
         tv.isHorizontallyResizable = false

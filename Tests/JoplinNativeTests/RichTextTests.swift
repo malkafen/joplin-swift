@@ -239,6 +239,7 @@ import Testing
         waitFor { tv.string.hasSuffix("Paragraph 30000 with bold text.") }
         #expect(tv.string.hasSuffix("Paragraph 30000 with bold text."))
         #expect(tv.layoutManager?.allowsNonContiguousLayout == true)
+        #expect(tv.usesFindBar && tv.isIncrementalSearchingEnabled)
 
         // Edits while rendering: only the latest text is shown in the end.
         coordinator.markdown = body + "first edit"
