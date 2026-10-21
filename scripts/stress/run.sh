@@ -10,6 +10,10 @@ runs=${RUNS:-3}
 mkdir -p "$work"
 cd "$work"
 quit_joplin() { osascript -e 'quit app "Joplin"' 2>/dev/null || true; sleep 8; }
+# CPU and memory of every process of the app, sampled next to the run (sample.py).
+sampler=""
+sample() { python3 "$here/sample.py" "$1" "$2" & sampler=$!; }
+stop_sampling() { kill "$sampler" 2>/dev/null || true; wait "$sampler" 2>/dev/null || true; }
 
 if [ ! -d jprof-pristine ]; then
   echo "Generating the dataset and loading it into a new Joplin profile…"
@@ -51,16 +55,20 @@ EOF
 )
 
 for i in $(seq "$runs"); do
-  echo "Joplin Native, run $i…"
+  echo "Joplin Native, run ${i}…"
   rm -rf nrun && cp -R native-pristine nrun
+  sample "/$(basename "$app")/" "$work/res-native-$i.samples.jsonl"
   open -W -n --env JN_DATA_DIR="$work/nrun" --env JN_STRESS_LOG="$work/res-native-$i.json" --env JN_STRESS_EXPECTED="$expected" \
     --env JN_STRESS_T0="$(python3 -c 'import time; print(time.time())')" "$app"
+  stop_sampling
   sleep 10
-  echo "Joplin Desktop, run $i…"
+  echo "Joplin Desktop, run ${i}…"
   quit_joplin
   rm -rf jrun && cp -R jprof-pristine jrun
+  sample "/Applications/Joplin.app/" "$work/res-joplin-$i.samples.jsonl"
   python3 "$here/jbench.py" "$work/jrun" "$work/res-joplin-$i.json" > "$work/res-joplin-$i.log" 2>&1
   quit_joplin
+  stop_sampling
 done
 
 python3 "$here/report.py" "Joplin Desktop=$work/res-joplin-*.json" "Joplin Native=$work/res-native-*.json"

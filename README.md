@@ -45,13 +45,17 @@ Both apps get the same library and go through the same steps, driven by scripts:
 
 | | Joplin Desktop 3.7.21 | Joplin Native |
 |---|--:|--:|
-| Launch with 10 000 notes | 2.3 s | 1.1 s |
-| Memory after launch / at the end of the test | 640 MB / 7.8 GB | 131 MB / 0.4 GB |
-| 20 MB note: open in split, freeze | 6.2 s | 0.12 s |
-| 20 MB note: ⌘↓ to the end, freeze | 33.5 s | 0.08 s |
-| 20 MB note: keystroke in split | 0.95 s | 0.10 s |
-| 20 MB note: freeze while the preview catches up after typing | 17.3 s | 1.0 s |
+| Launch with 10 000 notes | 2.5 s | 1.1 s |
+| Memory after launch / at the end of the test | 644 MB / 8.0 GB | 131 MB / 0.3 GB |
+| CPU time for the whole test (all cores) | 471 s | 36 s |
+| CPU while idle after launch | 18.5 % of a core | 0.8 % of a core |
+| 20 MB note: open in split, freeze | 6.2 s | 0.11 s |
+| 20 MB note: ⌘↓ to the end, freeze | 34.5 s | 0.09 s |
+| 20 MB note: keystroke in split | 1.1 s | 0.11 s |
+| 5 MB / 20 MB note: preview catches up after typing | 3.5 s / 27.4 s | 0.33 s / 0.39 s |
 | Search typed letter by letter with a 5 MB note open, freeze | 0.7 s | 0.4 s |
+
+<img src="docs/benchmark-usage.svg" alt="Memory and CPU time over the whole test: Joplin Desktop climbs to 8 GB and 470 s of CPU, Joplin Native stays under 0.8 GB and uses 36 s" width="860">
 
 <p>
 <img src="docs/huge-note.png" alt="A 20 MB note open in split: 270 596 lines" width="420">

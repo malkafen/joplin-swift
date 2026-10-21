@@ -2,192 +2,214 @@
  "app": "Joplin 3.7.21",
  "steps": [
   {
-   "ready": 2090,
-   "step": "launch"
+   "ready": 2469,
+   "start": 1792452988.816,
+   "step": "launch",
+   "at": 1792452991.285
   },
   {
-   "mb": 637,
-   "processes": 7,
-   "step": "memory_idle"
+   "mb": 646,
+   "processes": 8,
+   "step": "memory_idle",
+   "at": 1792453001.718
   },
   {
    "n": 19,
    "timeouts": 0,
-   "median": 51,
-   "max": 63,
+   "median": 55,
+   "max": 65,
    "freeze_max": 32,
-   "step": "switch_notes"
+   "step": "switch_notes",
+   "at": 1792453010.786
   },
   {
    "note": "Huge 1 MB",
-   "ready": 8,
-   "freeze": 26,
+   "ready": 9,
+   "freeze": 23,
    "settled": 0,
-   "step": "open_editor"
+   "step": "open_editor",
+   "at": 1792453013.345
   },
   {
    "note": "Huge 1 MB",
-   "ready": 802,
-   "freeze": 522,
-   "settled": 797,
-   "step": "to_split"
+   "ready": 865,
+   "freeze": 628,
+   "settled": 1124,
+   "step": "to_split",
+   "at": 1792453015.001
   },
   {
    "note": "Huge 1 MB",
-   "ready": 125,
-   "freeze": 80,
+   "ready": 128,
+   "freeze": 72,
    "settled": 0,
-   "step": "jump_end"
+   "step": "jump_end",
+   "at": 1792453017.231
   },
   {
    "note": "Huge 1 MB",
-   "key_median": 71,
-   "key_max": 78,
-   "preview_updated": 682,
-   "freeze": 236,
-   "settled": 2297,
-   "step": "typing_split"
+   "key_median": 78,
+   "key_max": 81,
+   "preview_updated": 1038,
+   "freeze": 273,
+   "settled": 2320,
+   "step": "typing_split",
+   "at": 1792453021.171
   },
   {
    "note": "Huge 1 MB",
-   "ready": 24,
-   "freeze": 267,
-   "settled": 217,
-   "step": "to_preview"
+   "ready": 35,
+   "freeze": 249,
+   "settled": 199,
+   "step": "to_preview",
+   "at": 1792453021.789
   },
   {
    "note": "Huge 1 MB",
-   "ready": 11,
-   "freeze": 64,
+   "ready": 14,
+   "freeze": 78,
    "settled": 0,
-   "step": "to_editor"
+   "step": "to_editor",
+   "at": 1792453022.336
   },
   {
    "note": "Huge 5 MB",
-   "ready": 241,
-   "freeze": 198,
-   "settled": 234,
-   "step": "open_editor"
+   "ready": 251,
+   "freeze": 195,
+   "settled": 247,
+   "step": "open_editor",
+   "at": 1792453023.095
   },
   {
    "note": "Huge 5 MB",
-   "ready": 2475,
-   "freeze": 1284,
-   "settled": 2471,
-   "step": "to_split"
+   "ready": 2520,
+   "freeze": 1230,
+   "settled": 2519,
+   "step": "to_split",
+   "at": 1792453027.356
   },
   {
    "note": "Huge 5 MB",
-   "ready": 6564,
-   "freeze": 6528,
-   "settled": 6720,
-   "step": "jump_end"
+   "ready": 8245,
+   "freeze": 8289,
+   "settled": 8239,
+   "step": "jump_end",
+   "at": 1792453039.501
   },
   {
    "note": "Huge 5 MB",
-   "key_median": 206,
-   "key_max": 210,
-   "preview_updated": 2677,
-   "freeze": 1510,
-   "settled": 4981,
-   "step": "typing_split"
+   "key_median": 235,
+   "key_max": 267,
+   "preview_updated": 3571,
+   "freeze": 1806,
+   "settled": 5594,
+   "step": "typing_split",
+   "at": 1792453046.789
   },
   {
    "note": "Huge 5 MB",
-   "ready": 127,
-   "freeze": 547,
-   "settled": 639,
-   "step": "to_preview"
+   "ready": 181,
+   "freeze": 652,
+   "settled": 685,
+   "step": "to_preview",
+   "at": 1792453049.109
   },
   {
    "note": "Huge 5 MB",
-   "ready": 13,
-   "freeze": 54,
+   "ready": 28,
+   "freeze": 94,
    "settled": 0,
-   "step": "to_editor"
+   "step": "to_editor",
+   "at": 1792453049.709
   },
   {
    "note": "Huge 20 MB",
-   "ready": 271,
-   "freeze": 336,
-   "settled": 605,
-   "step": "open_editor"
+   "ready": 691,
+   "freeze": 483,
+   "settled": 689,
+   "step": "open_editor",
+   "at": 1792453050.914
   },
   {
    "note": "Huge 20 MB",
-   "ready": 12661,
-   "freeze": 7784,
-   "settled": 12659,
-   "step": "to_split"
+   "ready": 16074,
+   "freeze": 9897,
+   "settled": 16578,
+   "step": "to_split",
+   "at": 1792453073.879
   },
   {
    "note": "Huge 20 MB",
-   "ready": 34044,
-   "freeze": 34077,
-   "settled": 34282,
-   "step": "jump_end"
+   "ready": 34481,
+   "freeze": 34502,
+   "settled": 34778,
+   "step": "jump_end",
+   "at": 1792453118.015
   },
   {
    "note": "Huge 20 MB",
-   "key_median": 940,
-   "key_max": 4569,
-   "preview_updated": 24735,
-   "freeze": 17592,
-   "settled": 34218,
-   "step": "typing_split"
+   "key_median": 1030,
+   "key_max": 4301,
+   "preview_updated": 27381,
+   "freeze": 18617,
+   "settled": 36213,
+   "step": "typing_split",
+   "at": 1792453156.213
   },
   {
    "note": "Huge 20 MB",
-   "ready": 6375,
-   "freeze": 3404,
-   "settled": 3353,
-   "step": "to_preview"
+   "ready": 5036,
+   "freeze": 4024,
+   "settled": 4531,
+   "step": "to_preview",
+   "at": 1792453184.745
   },
   {
    "note": "Huge 20 MB",
    "ready": 20,
-   "freeze": 96,
-   "settled": 0,
-   "step": "to_editor"
+   "freeze": 120,
+   "settled": 176,
+   "step": "to_editor",
+   "at": 1792453185.403
   },
   {
    "note": "Huge 1 MB",
-   "ready": 14809,
-   "freeze": 4595,
-   "settled": 15991,
-   "step": "open_split"
+   "ready": 46374,
+   "freeze": 21885,
+   "settled": 48121,
+   "step": "open_split",
+   "at": 1792453249.941
   },
   {
    "note": "Huge 5 MB",
-   "ready": 3532,
-   "freeze": 1186,
-   "settled": 3724,
-   "step": "open_split"
+   "ready": 4146,
+   "freeze": 1528,
+   "settled": 4442,
+   "step": "open_split",
+   "at": 1792453259.144
   },
   {
    "note": "Huge 20 MB",
-   "ready": 13786,
-   "freeze": 5856,
-   "settled": 13771,
-   "step": "open_split"
+   "ready": 14018,
+   "freeze": 5822,
+   "settled": 14000,
+   "step": "open_split",
+   "at": 1792453278.206
   },
   {
    "query": "значение",
    "expected": 2030,
-   "results_after_last_key": 28,
-   "freeze": 724,
-   "settled": 2788,
-   "step": "search_typing"
+   "results_after_last_key": 16,
+   "freeze": 719,
+   "settled": 2742,
+   "step": "search_typing",
+   "at": 1792453291.094
   },
   {
-   "marks_in_open_note": 0,
-   "step": "search_highlights"
-  },
-  {
-   "mb": 7713,
-   "processes": 7,
-   "step": "memory_end"
+   "mb": 8298,
+   "processes": 8,
+   "step": "memory_end",
+   "at": 1792453291.709
   }
- ],
- "joplin_list_after_search": 20
+ ]
 }

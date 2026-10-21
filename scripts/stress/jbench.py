@@ -21,13 +21,13 @@ def memory():
         if m: total += float(m[1]) * {"KB": 1 / 1024, "MB": 1, "GB": 1024}[m[2]]
     return round(total), len(pids)
 def log(name, **kw):
-    kw["step"] = name; R["steps"].append(kw); print(json.dumps(kw, ensure_ascii=False), flush=True)
+    kw["step"] = name; kw["at"] = round(time.time(), 3); R["steps"].append(kw); print(json.dumps(kw, ensure_ascii=False), flush=True)
 
 t0 = time.time()
 subprocess.run(["open", "-n", "-a", "Joplin", "--args", "--profile", prof, "--remote-debugging-port=9222"])
 j = Joplin(); j.t0 = t0
 ready = j.until("document.querySelectorAll('.note-list-item').length > 0 && document.querySelector('.cm-content')", timeout=300)
-log("launch", ready=round(ready))
+log("launch", ready=round(ready), start=round(t0, 3))
 time.sleep(10)
 mb, n = memory(); log("memory_idle", mb=mb, processes=n)
 
@@ -81,12 +81,11 @@ for name in ["Huge 1 MB", "Huge 5 MB", "Huge 20 MB"]:
     j.key("ArrowLeft"); time.sleep(1)
     lat = []; j.start()
     for ch in "abcde":
-        s = time.time(); j.type(ch); j.js("new Promise(r => requestAnimationFrame(() => r(0)))", 120); lat.append((time.time() - s) * 1000)
+        s = time.time(); last_key = (s - j.t0) * 1000; j.type(ch); j.js("new Promise(r => requestAnimationFrame(() => r(0)))", 120); lat.append((time.time() - s) * 1000)
         time.sleep(0.25)
-    typed_end = (time.time() - j.t0) * 1000
-    r3 = viewer_has(name.replace(" ", "") + "abcde")
+    r3 = viewer_has(name.replace(" ", "") + "abcde")  # from the last key, as StressProbe does
     log("typing_split", note=name, key_median=round(statistics.median(lat)), key_max=round(max(lat)),
-        preview_updated=r3 and round(r3 - typed_end), freeze=j.freeze(), settled=j.settled)
+        preview_updated=r3 and round(r3 - last_key), freeze=j.freeze(), settled=j.settled)
     layout([False, True]); r4 = viewer_has(name.replace(" ", "") + "abcde")
     log("to_preview", note=name, ready=r4 and round(r4), freeze=j.freeze(), settled=j.settled)
     layout([True, False])

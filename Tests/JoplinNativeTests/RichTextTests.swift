@@ -286,6 +286,127 @@ import Testing
         #expect((tv.string as NSString).substring(from: shown).hasPrefix("Paragraph 30"))
     }
 
+    /// Same numbers on every run, so a failing edit can be replayed.
+    struct SplitMix: RandomNumberGenerator {
+        var state: UInt64
+        mutating func next() -> UInt64 {
+            state &+= 0x9E37_79B9_7F4A_7C15
+            var z = state
+            z = (z ^ (z >> 30)) &* 0xBF58_476D_1CE4_E5B9
+            z = (z ^ (z >> 27)) &* 0x94D0_49BB_1331_11EB
+            return z ^ (z >> 31)
+        }
+    }
+
+    /// Random edits rendered as patches must look exactly like a full render.
+    @Test(arguments: 1...12) func patchesMatchFullRenders(seed: UInt64) throws {
+        let renderer = MarkdownRenderer(baseSize: 14) { _ in nil }
+        var markdown = (1...12).map { i in
+            "## Section \(i)\n\nText \(i) with **bold**, `code`, <b>html</b>, $x^\(i)$ and a [link](https://x.test).\n" +
+                "Second line.\n\n- [ ] task \(i)\n- [x] done \(i)\n  - nested\n\n1. one\n2. two\n\n> quote \(i)\n\n" +
+                "| a | b |\n|---|---|\n| \(i) | y |\n\n```swift\nlet v = \(i)\n```\n\nТекст по-русски \(i) 😀.\n"
+        }.joined(separator: "\n")
+        let snippets = ["x", "\n", "\n\n", "# ", "- [ ] ", "```", "|", "> ", "**", "Ж", "😀", "    ", "---\n", "$"]
+        var rng = SplitMix(state: seed)
+        var shown = MarkdownPreview.Coordinator.rendered(markdown, renderer, width: 640)
+        let storage = NSTextStorage(attributedString: shown.text)
+        var patched = 0
+        func runs(_ s: NSAttributedString) -> [String] {
+            var out: [String] = []
+            s.enumerateAttributes(in: NSRange(location: 0, length: s.length)) { a, r, _ in
+                let p = a[.paragraphStyle] as? NSParagraphStyle
+                out.append("\(r) \((a[.font] as? NSFont).map { "\($0.fontName) \($0.pointSize)" } ?? "") \(p?.paragraphSpacingBefore ?? -1) " +
+                           "\(p?.paragraphSpacing ?? -1) \(p?.headIndent ?? -1) \(p?.textBlocks.count ?? -1) " +
+                           "\(a[.jnAnchor] ?? "") \((a[.jnCheckbox] as? CheckboxLine)?.line ?? 0) \(a[.link] ?? "")")
+            }
+            return out
+        }
+        for step in 0..<200 {
+            let before = markdown
+            let ns = markdown as NSString
+            let length = ns.length
+            let at = Int.random(in: 0...length, using: &rng)
+            // Whole characters: a range inside an emoji would not be valid text.
+            let place = at == length ? length : ns.rangeOfComposedCharacterSequence(at: at).location
+            if Bool.random(using: &rng), place < length {
+                let r = ns.rangeOfComposedCharacterSequences(for: NSRange(location: place, length: min(Int.random(in: 1...6, using: &rng), length - place)))
+                markdown = ns.replacingCharacters(in: r, with: "")
+            } else {
+                markdown = ns.replacingCharacters(in: NSRange(location: place, length: 0), with: snippets.randomElement(using: &rng)!)
+            }
+            let full = MarkdownPreview.Coordinator.rendered(markdown, renderer, width: 640)
+            guard let patch = MarkdownPreview.Coordinator.patch(shown, to: markdown, renderer, width: 640) else {
+                storage.setAttributedString(full.text)
+                shown = full
+                continue
+            }
+            patched += 1
+            #expect(patch.length == storage.length)
+            if patch.lineDelta != 0 {
+                let rest = NSRange(location: patch.range.upperBound, length: storage.length - patch.range.upperBound)
+                storage.enumerateAttribute(.jnCheckbox, in: rest) { value, _, _ in (value as? CheckboxLine)?.line += patch.lineDelta }
+            }
+            storage.replaceCharacters(in: patch.range, with: patch.replacement)
+            let result = patch.result
+            let same = storage.string == full.text.string
+                && result.blocks.map { "\($0.source) \($0.line) \($0.rendered) \($0.headings)" }
+                == full.blocks.map { "\($0.source) \($0.line) \($0.rendered) \($0.headings)" }
+                && result.headings == full.headings && result.headingBases == full.headingBases && runs(storage) == runs(full.text)
+            if !same {
+                let d = MarkdownPreview.Coordinator.difference(before, markdown)!
+                let b = before as NSString, m = markdown as NSString
+                let at = zip(storage.string, full.text.string).prefix { $0 == $1 }.count
+                let blocks = zip(result.blocks, full.blocks).first { "\($0.0)" != "\($0.1)" }
+                let run = zip(runs(storage), runs(full.text)).first { $0 != $1 }
+                Issue.record("""
+                    seed \(seed) step \(step) replaced \(patch.range): \(b.substring(with: NSRange(location: d.start, length: d.oldEnd - d.start)).debugDescription) \
+                    -> \(m.substring(with: NSRange(location: d.start, length: d.newEnd - d.start)).debugDescription) at \(d.start)
+                    context: \(m.substring(with: NSRange(location: max(0, d.start - 150), length: min(m.length, d.newEnd + 150) - max(0, d.start - 150))).debugDescription)
+                    text at \(at): \(String(storage.string.dropFirst(max(0, at - 30)).prefix(80)).debugDescription)
+                         vs \(String(full.text.string.dropFirst(max(0, at - 30)).prefix(80)).debugDescription)
+                    block: \(blocks.map { "\($0.0)\n   vs \($0.1)" } ?? "same")
+                    run: \(run.map { "\($0.0)\n   vs \($0.1)" } ?? "same")
+                    """)
+                break
+            }
+            shown = result
+        }
+        // Most edits are patches.
+        #expect(patched > 60, "\(patched)")
+    }
+
+    @Test func patchesLeaveTiedNotesWhole() throws {
+        let renderer = MarkdownRenderer(baseSize: 14) { _ in nil }
+        // What ties distant blocks together is rendered whole.
+        for tied in ["[toc]\n\n# A\n\nx", "[r]: https://x.test\n\nx", "$$\nx\n$$\n\nx"] {
+            let old = MarkdownPreview.Coordinator.rendered(tied, renderer, width: 640)
+            #expect(MarkdownPreview.Coordinator.patch(old, to: tied + "y", renderer, width: 640) == nil, "\(tied)")
+        }
+        // Equal headings are numbered in order: one more before others renumbers them.
+        let numbered = MarkdownPreview.Coordinator.rendered("# A\n\nx\n\ny\n\n# A\n\nz", renderer, width: 640)
+        #expect(numbered.headings == ["a", "a-1"])
+        #expect(MarkdownPreview.Coordinator.patch(numbered, to: "# A\n\nx\n\ny\n\n# A\n\nzz", renderer, width: 640)?.result.headings == ["a", "a-1"])
+        #expect(MarkdownPreview.Coordinator.patch(numbered, to: "# A\n\nx\n\n# A\n\ny\n\n# A\n\nz", renderer, width: 640) == nil)
+        let same = MarkdownPreview.Coordinator.rendered("a\n\nb", renderer, width: 640)
+        #expect(MarkdownPreview.Coordinator.patch(same, to: "a\n\nb", renderer, width: 640)?.replacement.length == 0)
+        #expect(MarkdownPreview.Coordinator.difference("same", "same") == nil)
+        let d = try #require(MarkdownPreview.Coordinator.difference("a😀b", "a😁b"))
+        #expect(d.start == 1 && d.oldEnd == 3 && d.newEnd == 3 && d.newLength == 4)
+        // Across the chunks it compares, and with the editor's text (an NSString).
+        let long = String(repeating: "abc\n", count: 10_000)
+        let edited = NSMutableString(string: long + "yz" + long) as String
+        let e = try #require(MarkdownPreview.Coordinator.difference(long + "x" + long, edited))
+        #expect(e.start == 40_000 && e.oldEnd == 40_001 && e.newEnd == 40_002 && e.newLength == 80_002)
+        #expect(MarkdownPreview.Coordinator.difference(long, long + "q")?.start == 40_000)
+        #expect(MarkdownPreview.Coordinator.hasReferenceDefinition("text\n\n  [ref]: https://x.test"))
+        #expect("a $x$".quickContains("$") && !"plain".quickContains("$") && !"".quickContains("$"))
+        #expect((NSMutableString(string: "a ]: b") as String).quickContains("]:") && !(NSMutableString(string: "a") as String).quickContains("$"))
+        #expect(!MarkdownPreview.Coordinator.hasReferenceDefinition("see [a]: b and\n    [code]: x\n[x](y)"))
+        // A large change is shown whole: inserting it into the shown text would take longer.
+        let small = MarkdownPreview.Coordinator.rendered("a\n\nb", renderer, width: 640)
+        #expect(MarkdownPreview.Coordinator.patch(small, to: "a\n\nb" + String(repeating: "word ", count: 50_000), renderer, width: 640) == nil)
+    }
+
     @Test func remoteImagesTriggerRerender() {
         let (tv, _, coordinator, _) = preview("![x](https://img.test/a.png)")
         coordinator.markdown = "![x](https://img.test/a.png)"

@@ -331,6 +331,14 @@ import Testing
         #expect(fenced.string == "x12")
         #expect((fenced.attribute(.baselineOffset, at: 1, effectiveRange: nil) as? CGFloat ?? 0) < 0)
         #expect((fenced.attribute(.baselineOffset, at: 2, effectiveRange: nil) as? CGFloat ?? 0) > 0)
+        // Markdown keeps the fence open at "```swift", the extraction closes it: the formula stays literal in the code.
+        #expect(render("```\n```swift\nlet a = $x$\n```").string.contains("let a = $x$"))
+        let titled = MarkdownRenderer(baseSize: 14) { _ in nil }.renderDocument("$a$ and $b$\n\n# Area $b^2$")
+        #expect(titled.headings == ["area-b2"])
+        #expect(MathExtractor.openFence(after: "text\n```swift\n$x$\n") == "```")
+        #expect(MathExtractor.openFence(after: "~~~\n$$\n```\n$$\n", from: nil) == "~~~")
+        #expect(MathExtractor.openFence(after: "$$\n```\n$$\nx", from: nil) == nil)
+        #expect(MathExtractor.openFence(after: "```\n", from: "```") == nil)
     }
 
     @Test func respectsBaseSize() throws {

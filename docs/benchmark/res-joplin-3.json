@@ -1,0 +1,215 @@
+{
+ "app": "Joplin 3.7.21",
+ "steps": [
+  {
+   "ready": 2814,
+   "start": 1792454005.389,
+   "step": "launch",
+   "at": 1792454008.202
+  },
+  {
+   "mb": 644,
+   "processes": 8,
+   "step": "memory_idle",
+   "at": 1792454018.661
+  },
+  {
+   "n": 19,
+   "timeouts": 0,
+   "median": 53,
+   "max": 66,
+   "freeze_max": 38,
+   "step": "switch_notes",
+   "at": 1792454027.691
+  },
+  {
+   "note": "Huge 1 MB",
+   "ready": 15,
+   "freeze": 20,
+   "settled": 0,
+   "step": "open_editor",
+   "at": 1792454030.282
+  },
+  {
+   "note": "Huge 1 MB",
+   "ready": 797,
+   "freeze": 321,
+   "settled": 793,
+   "step": "to_split",
+   "at": 1792454031.881
+  },
+  {
+   "note": "Huge 1 MB",
+   "ready": 129,
+   "freeze": 90,
+   "settled": 0,
+   "step": "jump_end",
+   "at": 1792454034.134
+  },
+  {
+   "note": "Huge 1 MB",
+   "key_median": 81,
+   "key_max": 84,
+   "preview_updated": 1069,
+   "freeze": 287,
+   "settled": 2382,
+   "step": "typing_split",
+   "at": 1792454038.139
+  },
+  {
+   "note": "Huge 1 MB",
+   "ready": 32,
+   "freeze": 326,
+   "settled": 276,
+   "step": "to_preview",
+   "at": 1792454038.747
+  },
+  {
+   "note": "Huge 1 MB",
+   "ready": 14,
+   "freeze": 42,
+   "settled": 0,
+   "step": "to_editor",
+   "at": 1792454039.29
+  },
+  {
+   "note": "Huge 5 MB",
+   "ready": 242,
+   "freeze": 166,
+   "settled": 239,
+   "step": "open_editor",
+   "at": 1792454040.039
+  },
+  {
+   "note": "Huge 5 MB",
+   "ready": 2158,
+   "freeze": 1410,
+   "settled": 2349,
+   "step": "to_split",
+   "at": 1792454043.659
+  },
+  {
+   "note": "Huge 5 MB",
+   "ready": 8082,
+   "freeze": 8127,
+   "settled": 8077,
+   "step": "jump_end",
+   "at": 1792454055.605
+  },
+  {
+   "note": "Huge 5 MB",
+   "key_median": 214,
+   "key_max": 231,
+   "preview_updated": 3540,
+   "freeze": 1726,
+   "settled": 5409,
+   "step": "typing_split",
+   "at": 1792454062.69
+  },
+  {
+   "note": "Huge 5 MB",
+   "ready": 170,
+   "freeze": 579,
+   "settled": 685,
+   "step": "to_preview",
+   "at": 1792454064.17
+  },
+  {
+   "note": "Huge 5 MB",
+   "ready": 20,
+   "freeze": 77,
+   "settled": 0,
+   "step": "to_editor",
+   "at": 1792454064.737
+  },
+  {
+   "note": "Huge 20 MB",
+   "ready": 311,
+   "freeze": 323,
+   "settled": 630,
+   "step": "open_editor",
+   "at": 1792454065.564
+  },
+  {
+   "note": "Huge 20 MB",
+   "ready": 12230,
+   "freeze": 6825,
+   "settled": 12563,
+   "step": "to_split",
+   "at": 1792454081.826
+  },
+  {
+   "note": "Huge 20 MB",
+   "ready": 42584,
+   "freeze": 42609,
+   "settled": 42890,
+   "step": "jump_end",
+   "at": 1792454135.981
+  },
+  {
+   "note": "Huge 20 MB",
+   "key_median": 1292,
+   "key_max": 5017,
+   "preview_updated": 32653,
+   "freeze": 19163,
+   "settled": 39553,
+   "step": "typing_split",
+   "at": 1792454177.964
+  },
+  {
+   "note": "Huge 20 MB",
+   "ready": 6212,
+   "freeze": 4568,
+   "settled": 5097,
+   "step": "to_preview",
+   "at": 1792454208.826
+  },
+  {
+   "note": "Huge 20 MB",
+   "ready": 19,
+   "freeze": 114,
+   "settled": 176,
+   "step": "to_editor",
+   "at": 1792454209.516
+  },
+  {
+   "note": "Huge 1 MB",
+   "ready": 44296,
+   "freeze": 17913,
+   "settled": 44284,
+   "step": "open_split",
+   "at": 1792454273.012
+  },
+  {
+   "note": "Huge 5 MB",
+   "ready": 4324,
+   "freeze": 1869,
+   "settled": 4307,
+   "step": "open_split",
+   "at": 1792454282.382
+  },
+  {
+   "note": "Huge 20 MB",
+   "ready": 15144,
+   "freeze": 6196,
+   "settled": 15331,
+   "step": "open_split",
+   "at": 1792454302.573
+  },
+  {
+   "query": "значение",
+   "expected": 2030,
+   "results_after_last_key": 41,
+   "freeze": 125,
+   "settled": 2273,
+   "step": "search_typing",
+   "at": 1792454315.132
+  },
+  {
+   "mb": 7572,
+   "processes": 8,
+   "step": "memory_end",
+   "at": 1792454315.799
+  }
+ ]
+}

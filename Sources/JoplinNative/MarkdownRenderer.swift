@@ -24,6 +24,8 @@ struct RenderedBlock {
     var line: Int
     /// Range of the block in the rendered text.
     var rendered: NSRange
+    /// Headings in the block.
+    var headings = 0
 }
 
 /// A rendered note with what the preview needs to update and scroll it block by block.
@@ -37,6 +39,10 @@ struct RenderedDocument {
     var headings: [String]
     /// Holds a `[toc]`, which depends on every heading.
     var hasTOC: Bool
+    /// Heading slugs before the number that tells equal ones apart.
+    var headingBases: [String] = []
+    /// Inline HTML left open at the end of a block styles the blocks after it.
+    var htmlCarries = false
 }
 
 /// Renders Markdown into an NSAttributedString using AppKit text blocks and tables (no web view).
@@ -103,28 +109,35 @@ struct MarkdownRenderer {
         renderDocument(markdown, maxImageWidth: maxImageWidth).text
     }
 
-    /// The rendered note with the source and rendered range of each top-level block.
-    func renderDocument(_ markdown: String, maxImageWidth: CGFloat = 640) -> RenderedDocument {
+    /// The rendered note with the source and rendered range of each top-level block. When `markdown` is a part of
+    /// the note, `firstLine` is the line it starts at, `headingsBefore` counts the heading slugs before it (equal
+    /// ones get numbers), and `endsNote` false keeps the breaks after its last block.
+    func renderDocument(_ markdown: String, maxImageWidth: CGFloat = 640, firstLine: Int = 1, headingsBefore: [String: Int] = [:],
+                        endsNote: Bool = true) -> RenderedDocument {
         // The extraction keeps the lines, so block lines are lines of `markdown`.
         let (source, formulas) = MathExtractor.extract(markdown)
         let document = Document(parsing: source)
         let builder = AttributedBuilder(renderer: self, maxImageWidth: maxImageWidth, formulas: formulas)
-        builder.collectHeadings(document)
+        builder.lineOffset = firstLine - 1
+        builder.collectHeadings(document, before: headingsBefore)
+        var htmlCarries = false
         let lineStarts = Self.lineStarts(markdown)
         let sourceLength = lineStarts.last ?? 0
         func offset(ofLine line: Int) -> Int { line - 1 < lineStarts.count - 1 ? lineStarts[max(0, line - 1)] : sourceLength }
         var blocks: [RenderedBlock] = []
         for child in document.children {
-            let start = builder.out.length
+            let start = builder.out.length, headings = builder.headingIndex
             builder.blocks(CollectionOfOne(child), BlockStyle())
+            htmlCarries = htmlCarries || builder.htmlIsOpen
             guard let range = child.range else { continue }
             let from = offset(ofLine: range.lowerBound.line)
             let to = max(from, offset(ofLine: range.upperBound.line + 1))
-            blocks.append(RenderedBlock(source: NSRange(location: from, length: to - from), line: range.lowerBound.line,
-                                        rendered: NSRange(location: start, length: builder.out.length - start)))
+            blocks.append(RenderedBlock(source: NSRange(location: from, length: to - from), line: range.lowerBound.line + firstLine - 1,
+                                        rendered: NSRange(location: start, length: builder.out.length - start),
+                                        headings: builder.headingIndex - headings))
         }
         // Drop the trailing paragraph break and spacers.
-        while builder.out.length > 0, builder.out.mutableString.character(at: builder.out.length - 1) == 10 {
+        while endsNote, builder.out.length > 0, builder.out.mutableString.character(at: builder.out.length - 1) == 10 {
             builder.out.deleteCharacters(in: NSRange(location: builder.out.length - 1, length: 1))
         }
         // Blocks cover the text without gaps: one without a source range joins the next.
@@ -135,7 +148,8 @@ struct MarkdownRenderer {
             position = max(position, end)
         }
         return RenderedDocument(text: builder.out, sizedToWidth: builder.sizedToWidth, blocks: blocks,
-                                headings: builder.headingSlugs, hasTOC: builder.hasTOC)
+                                headings: builder.headingSlugs, hasTOC: builder.hasTOC,
+                                headingBases: builder.headingBases, htmlCarries: htmlCarries)
     }
 
     /// UTF-16 offsets of the line starts, followed by the length.
@@ -384,12 +398,16 @@ private final class AttributedBuilder {
     private var pendingIndent: (first: CGFloat, head: CGFloat, tabs: [NSTextTab])?
     private var html = HTMLState()
     private var headings: [(level: Int, title: String, slug: String)] = []
-    private var headingIndex = 0
+    private(set) var headingIndex = 0
+    private(set) var headingBases: [String] = []
+    /// Added to the source lines of checkboxes.
+    var lineOffset = 0
     /// Symbols drawn so far: making one is slow, and a long checklist needs thousands of the same.
     private var symbols: [String: NSAttributedString] = [:]
     private(set) var sizedToWidth = false
     private(set) var hasTOC = false
     var headingSlugs: [String] { headings.map(\.slug) }
+    var htmlIsOpen: Bool { !html.counts.isEmpty || !html.links.isEmpty }
 
     private static let linkDetector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
     private static let highlight = try! NSRegularExpression(pattern: "==(?=\\S)(.+?)(?<=\\S)==")
@@ -404,12 +422,14 @@ private final class AttributedBuilder {
     private var base: CGFloat { typography.size }
 
     /// Headings in document order with unique slugs, for anchors and `[toc]`.
-    func collectHeadings(_ document: Document) {
-        var seen: [String: Int] = [:]
+    func collectHeadings(_ document: Document, before: [String: Int] = [:]) {
+        var seen = before.compactMapValues { $0 > 0 ? $0 - 1 : nil }
         func walk(_ m: Markup) {
             if let h = m as? Heading {
-                let title = Self.plainText(h)
+                // Formulas by their TeX, not by their number in the note.
+                let title = restoreMath(Self.plainText(h))
                 var slug = MarkdownRenderer.slug(title)
+                headingBases.append(slug)
                 if let n = seen[slug] {
                     seen[slug] = n + 1
                     slug += "-\(n + 1)"
@@ -504,14 +524,16 @@ private final class AttributedBuilder {
             heading(h, b)
         case let c as CodeBlock:
             let language = c.language?.lowercased()
+            // The extraction can take a fence differently (closing it at "```swift"), so formulas can end up inside.
+            let code = restoreMath(c.code)
             if language == "math" || language == "latex" || language == "katex" || language == "tex" {
-                displayMath(c.code, b)
-            } else if language == "mermaid", let image = MarkdownRenderer.mermaid(c.code, fontSize: base * 0.9) {
+                displayMath(code, b)
+            } else if language == "mermaid", let image = MarkdownRenderer.mermaid(code, fontSize: base * 0.9) {
                 diagram(image, card: true, b)
-            } else if language == "drawio", let image = Drawio.image(xml: c.code) {
+            } else if language == "drawio", let image = Drawio.image(xml: code) {
                 diagram(image, card: false, b)
             } else {
-                codeBlock(c.code, language: c.language, b)
+                codeBlock(code, language: c.language, b)
             }
         case let q as BlockQuote:
             blockQuote(q, b)
@@ -766,7 +788,7 @@ private final class AttributedBuilder {
                 if let icon = symbolAttachment(symbol, colors: colors, font: font(InlineStyle(size: base * 1.12))) {
                     let marker = NSMutableAttributedString(attributedString: icon)
                     var extra: [NSAttributedString.Key: Any] = [.cursor: NSCursor.pointingHand]
-                    if let line = item.range?.lowerBound.line { extra[.jnCheckbox] = CheckboxLine(line) }
+                    if let line = item.range?.lowerBound.line { extra[.jnCheckbox] = CheckboxLine(line + lineOffset) }
                     marker.addAttributes(extra, range: NSRange(location: 0, length: marker.length))
                     prefix.append(marker)
                 }
@@ -1136,7 +1158,7 @@ private final class AttributedBuilder {
         }
     }
 
-    /// Puts formulas back into code spans, where they must stay literal.
+    /// Puts formulas back into code, where they must stay literal.
     private func restoreMath(_ code: String) -> String {
         guard code.contains(MathExtractor.open) else { return code }
         let ns = code as NSString
