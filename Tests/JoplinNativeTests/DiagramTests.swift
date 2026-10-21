@@ -429,6 +429,86 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(model.searchPosition == nil)
     }
 
+    /// ⌘F finds in the open note, from wherever the focus is; ⌘L stays the search over all notes.
+    @Test func commandFFindsInTheOpenNote() throws {
+        _ = NSApplication.shared
+        let h = try ModelHarness()
+        let model = h.model
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        let toolbar = NSToolbar(identifier: "test-\(UUID().uuidString)")
+        window.toolbar = toolbar
+        let editor = MarkdownTextView(usingTextLayoutManager: false), preview = PreviewTextView(usingTextLayoutManager: false)
+        let list = NSTextView()  // stands for the note list: something else with the focus
+        for (view, x) in [(editor as NSView, 0.0), (preview, 200.0), (list, 400.0)] {
+            let scroll = NSScrollView(frame: NSRect(x: x, y: 0, width: 200, height: 400))
+            scroll.documentView = view
+            view.frame = scroll.bounds
+            window.contentView?.addSubview(scroll)
+        }
+        editor.usesFindBar = true
+        preview.usesFindBar = true
+        model.searchStepper.editor = editor
+        model.searchStepper.preview = preview
+        func commandF(_ key: UInt16 = 3, _ flags: NSEvent.ModifierFlags = .command, in w: NSWindow? = nil) -> NSEvent {
+            NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: (w ?? window).windowNumber,
+                             context: nil, characters: "f", charactersIgnoringModifiers: "f", isARepeat: false, keyCode: key)!
+        }
+        // Without a note there is nothing to find in.
+        model.selectedNoteIDs = []
+        window.makeFirstResponder(list)
+        model.findInNote(in: window)
+        #expect(window.firstResponder === list)
+        /// The find bar of `tv` is shown and has the focus.
+        func findsIn(_ tv: NSTextView) -> Bool {
+            guard let scroll = tv.enclosingScrollView, scroll.isFindBarVisible,
+                  let focus = window.firstResponder as? NSView else { return false }
+            return focus === tv || focus.isDescendant(of: scroll)
+        }
+
+        let note = try #require(model.notes.first)
+        model.selectedNoteIDs = [note.id]
+        model.layout = .editor
+        model.findInNote(in: window)
+        #expect(findsIn(editor))
+        // Preview only, or the preview has the focus: the preview's find bar.
+        model.layout = .preview
+        window.makeFirstResponder(list)
+        model.findInNote(in: window)
+        #expect(findsIn(preview))
+        model.layout = .split
+        window.makeFirstResponder(preview)
+        model.findInNote(in: window)
+        #expect(findsIn(preview))
+        window.makeFirstResponder(list)
+        model.findInNote(in: window)
+        #expect(findsIn(editor))
+
+        // Only ⌘F in a window with the note toolbar search; ⌘L and other windows are left alone.
+        let other = NSWindow(contentRect: .zero, styleMask: [.titled], backing: .buffered, defer: false)
+        other.isReleasedWhenClosed = false
+        #expect(!model.handleFindShortcut(commandF(37)))
+        #expect(!model.handleFindShortcut(commandF(3, [.command, .shift])))
+        #expect(!model.handleFindShortcut(commandF(in: other)))
+        #expect(!model.handleFindShortcut(commandF()))  // no search field in this toolbar
+        let search = SearchToolbar()
+        let noteWindow = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 200), styleMask: [.titled], backing: .buffered, defer: false)
+        noteWindow.isReleasedWhenClosed = false
+        let bar = NSToolbar(identifier: "search-\(UUID().uuidString)")
+        bar.delegate = search
+        noteWindow.toolbar = bar
+        #expect(model.handleFindShortcut(commandF(in: noteWindow)))
+    }
+
+    final class SearchToolbar: NSObject, NSToolbarDelegate {
+        static let id = NSToolbarItem.Identifier("search")
+        func toolbar(_ toolbar: NSToolbar, itemForItemIdentifier id: NSToolbarItem.Identifier, willBeInsertedIntoToolbar flag: Bool) -> NSToolbarItem? {
+            NSSearchToolbarItem(itemIdentifier: id)
+        }
+        func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.id] }
+        func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] { [Self.id] }
+    }
+
     /// Search words are drawn where the text is shown; the text itself is left alone.
     @Test func layoutManagerMarksMatchesWithoutTouchingTheText() {
         let storage = NSTextStorage(string: String(repeating: "one two three\n", count: 2_000))

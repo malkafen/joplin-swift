@@ -244,7 +244,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         add("8", "Bulleted List", shift: true); add("7", "Numbered List", shift: true); add("9", "Checklist", shift: true)
         add("m", "Math Formula", ctrl: true); add("a", "Attach File", shift: true); add("d", "Duplicate")
         add("d", "Switch to To-do", shift: true); add("l", "Copy Markdown Link", shift: true); add("r", "Edit Title", opt: true)
-        add("k", "Edit Tags", opt: true); add("l", "Search All Notes"); add("f", "Find"); add("g", "Find Next")
+        add("k", "Edit Tags", opt: true); add("l", "Search All Notes"); add("f", "Find in Note"); add("g", "Find Next")
         add("g", "Find Previous", shift: true); add("t", "Show Tags in Sidebar", ctrl: true); add("s", "Toggle Sidebar", ctrl: true)
         add("0", "Actual Size"); add("+", "Zoom In"); add("-", "Zoom Out"); add("z", "Undo"); add("z", "Redo", shift: true)
         add("c", "Copy"); add("v", "Paste"); add("x", "Cut"); add("a", "Select All"); add("q", "Quit"); add("w", "Close")
