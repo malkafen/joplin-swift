@@ -30,14 +30,9 @@ struct JoplinNativeApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate {
     /// Replaced in tests so they never touch the real database.
     lazy var model: AppModel = .shared
-    private var findMonitor: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Snapshot.scheduleIfRequested(model: model)
-        // Before the menus: the Find item would take ⌘F to the toolbar search field.
-        findMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            self?.model.handleFindShortcut(event) == true ? nil : event
-        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -65,6 +60,10 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .textEditing) {
+            // The Edit menu has no Find item of its own: ⌘F reached only the editor, and only when it was shown.
+            Button("Find in Note") { model.findInNote() }
+                .keyboardShortcut("f")
+                .disabled(model.currentNote == nil)
             Button("Search All Notes") { model.focusSearch() }
                 .keyboardShortcut("l")
         }
