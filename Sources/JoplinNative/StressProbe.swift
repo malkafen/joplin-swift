@@ -74,6 +74,8 @@ enum StressProbe {
     static func run(model: AppModel, env: [String: String]) async {
         let launchedAt = Double(env["JN_STRESS_T0"] ?? "") ?? 0
         t0 = CFAbsoluteTimeGetCurrent()
+        // The app starts with nothing chosen; the launch is measured up to the list of all notes, like Joplin's.
+        if model.sidebarSelection == nil { model.sidebarSelection = .allNotes }
         _ = await until { !model.notes.isEmpty && model.searchStepper.editor?.window?.isVisible == true }
         log("launch", ["ready": Int((Date().timeIntervalSince1970 - launchedAt) * 1000), "start": launchedAt])
         await sleep(10)

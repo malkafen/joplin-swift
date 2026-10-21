@@ -443,7 +443,7 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         model.expansion(of: a.id).wrappedValue = false
         #expect(!model.expansion(of: a.id).wrappedValue)
         model.expansion(of: a.id).wrappedValue = true
-        #expect(h.defaults.stringArray(forKey: "expandedFolders")?.count == 2)
+        #expect(model.expandedFolders == [a.id, b.id])
         model.collapseAllFolders()
         #expect(model.expandedFolders.isEmpty)
         model.stickyNotebooks = false

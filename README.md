@@ -67,8 +67,8 @@ Both apps get the same library and go through the same steps, driven by scripts:
 ## Features
 
 - **Notebooks**: nested notebooks with emoji icons, drag & drop, trash with restore (notebooks in the trash fold
-  under it). Expanded notebooks are remembered; View → Expand / Collapse All Notebooks, or the collapse button
-  next to “Notebooks”.
+  under it). The app starts with the notebooks collapsed, nothing chosen and no note open; View → Expand /
+  Collapse All Notebooks, or the collapse button next to “Notebooks”.
 - **Sticky scroll** in the notebook tree: while the sidebar scrolls, the parent notebooks of the rows at the top
   stay pinned (click one to jump to it), so deep hierarchies keep their context. Settings → General.
 - **Notes and to-dos**: checkboxes in the list, completed to-dos sorted to the bottom, duplicate, move, copy link

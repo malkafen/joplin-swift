@@ -209,6 +209,8 @@ enum Snapshot {
                                     quit: @escaping @MainActor () -> Void = { NSApp.terminate(nil) }) {
         StressProbe.start(model: model)
         guard let path = env["JN_SNAPSHOT"] else { return }
+        // Screenshots show a note list, as before the app started with nothing chosen.
+        if model.sidebarSelection == nil { model.sidebarSelection = .allNotes }
         let delay = Double(env["JN_SNAPSHOT_DELAY"] ?? "") ?? 3
         if let profile = env["JN_IMPORT_DESKTOP"] {
             DispatchQueue.main.asyncAfter(deadline: .now() + min(0.5, delay / 4)) {
