@@ -572,15 +572,16 @@ struct MarkdownPreview: NSViewRepresentable {
 
         /// Notes longer than this (`quickLength`) render off the main thread, their start shown meanwhile:
         /// rendering a huge note takes seconds.
-        static let backgroundLength = 200_000
+        nonisolated static let backgroundLength = 200_000
         private var sizedToWidth = true
         private var generation = 0
         /// A render off the main thread is running; asked again meanwhile, the latest text renders when it is done
         /// (revealing the first match if any request wanted that).
         private var rendering = false
         private var renderAgain: (reveal: Bool, incremental: Bool)?
-        /// What the text view shows.
+        /// What the text view shows, and a number that changes with it.
         private var shown: Rendered?
+        private var shownVersion = 0
         private let renderQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.preview", qos: .userInitiated)
 
         struct Rendered: @unchecked Sendable {
@@ -592,12 +593,175 @@ struct MarkdownPreview: NSViewRepresentable {
             var headings: [String]
             var hasTOC: Bool
             var width: CGFloat
+            var headingBases: [String] = []
+            var htmlCarries = false
+            var hasReferenceDefinitions = false
+            /// Holds a `$`, so formulas may be found.
+            var hasDollar = false
         }
 
         nonisolated static func rendered(_ markdown: String, _ renderer: MarkdownRenderer, width: CGFloat) -> Rendered {
             let document = renderer.renderDocument(markdown, maxImageWidth: width)
             return Rendered(text: NSTextStorage(attributedString: document.text), sizedToWidth: document.sizedToWidth, markdown: markdown,
-                            blocks: document.blocks, headings: document.headings, hasTOC: document.hasTOC, width: width)
+                            blocks: document.blocks, headings: document.headings, hasTOC: document.hasTOC, width: width,
+                            headingBases: document.headingBases, htmlCarries: document.htmlCarries,
+                            hasReferenceDefinitions: hasReferenceDefinition(markdown),
+                            hasDollar: markdown.quickContains("$"))
+        }
+
+        /// A change of the shown text made by rendering only the blocks around an edit.
+        struct Patch: @unchecked Sendable {
+            /// Range of the shown text to replace.
+            var range: NSRange
+            var replacement: NSAttributedString
+            /// Added to the source lines of the checkboxes after `range`.
+            var lineDelta: Int
+            /// Length of the text it was made for.
+            var length: Int
+            /// What is shown once applied; its `text` is the text it was made for.
+            var result: Rendered
+        }
+
+        /// UTF-16 offsets where `a` and `b` start to differ and where the rest is the same again in each, with the
+        /// length of `b`; nil when they are equal. Compares UTF-16 in chunks: the editor's text is an NSString, and
+        /// converting a huge note to UTF-8 takes longer than rendering the change.
+        nonisolated static func difference(_ a: String, _ b: String) -> (start: Int, oldEnd: Int, newEnd: Int, newLength: Int)? {
+            let x = a as NSString, y = b as NSString
+            let xl = x.length, yl = y.length, n = min(xl, yl)
+            let chunk = 16_384
+            var p = [unichar](repeating: 0, count: chunk), q = [unichar](repeating: 0, count: chunk)
+            /// Units that are the same from the start (`fromEnd` false) or from the end, at most `n`.
+            func same(fromEnd: Bool) -> Int {
+                var done = 0
+                while done < n {
+                    let count = min(chunk, n - done)
+                    x.getCharacters(&p, range: NSRange(location: fromEnd ? xl - done - count : done, length: count))
+                    y.getCharacters(&q, range: NSRange(location: fromEnd ? yl - done - count : done, length: count))
+                    if memcmp(p, q, count * 2) == 0 {
+                        done += count
+                        continue
+                    }
+                    var i = 0
+                    if fromEnd {
+                        while p[count - 1 - i] == q[count - 1 - i] { i += 1 }
+                    } else {
+                        while p[i] == q[i] { i += 1 }
+                    }
+                    return done + i
+                }
+                return n
+            }
+            var start = same(fromEnd: false)
+            guard start < xl || start < yl else { return nil }
+            // Whole characters: not between the halves of a surrogate pair.
+            if start > 0, start < xl, UTF16.isTrailSurrogate(x.character(at: start)) { start -= 1 }
+            var tail = min(same(fromEnd: true), n - start)
+            if tail > 0, UTF16.isTrailSurrogate(x.character(at: xl - tail)) { tail -= 1 }
+            return (start, xl - tail, yl - tail, yl)
+        }
+
+        /// Renders only the blocks of `markdown` around what changed since `old`, with one more block on each side
+        /// for context (the first block of a text has no space above). Nil when the change can reach further: the
+        /// context blocks come out differently (an open code fence), the headings change so that the numbers of equal
+        /// ones after the change would, or the note has what ties distant blocks together: `[toc]`, reference
+        /// definitions, `$$` formulas, open inline HTML.
+        /// Also nil for a change of more than `backgroundLength`. Reads only the values of `old`, never its text, so it
+        /// can run off the main thread.
+        nonisolated static func patch(_ old: Rendered, to markdown: String, _ renderer: MarkdownRenderer, width: CGFloat) -> Patch? {
+            let o = old.blocks
+            guard !o.isEmpty, !old.hasTOC, !old.htmlCarries, !old.hasReferenceDefinitions,
+                  old.width == width || !old.sizedToWidth, old.headingBases.count == old.headings.count,
+                  old.headings.count == o.reduce(0, { $0 + $1.headings }) else { return nil }
+            guard let change = difference(old.markdown, markdown) else {
+                var result = old
+                result.markdown = markdown
+                return Patch(range: NSRange(location: 0, length: 0), replacement: NSAttributedString(), lineDelta: 0,
+                             length: o[o.count - 1].rendered.upperBound, result: result)
+            }
+            let delta = change.newEnd - change.oldEnd
+            // Blocks a...b are rendered again: the changed ones and a neighbour on each side, whose spacing can change.
+            let first = o.firstIndex { $0.source.upperBound >= change.start } ?? o.count
+            let a = max(0, min(first, o.count - 1) - 1)
+            let b = max(a, min(o.firstIndex { $0.source.location > change.oldEnd } ?? o.count, o.count - 1))
+            let before = a > 0 ? a - 1 : nil, after = b + 1 < o.count ? b + 1 : nil
+            let start = before.map { o[$0].source.location } ?? 0
+            let end = after.map { o[$0].source.upperBound + delta } ?? change.newLength
+            // Inserting much text into the shown one is slower than showing a new one (another note, a paste).
+            guard end - start <= backgroundLength else { return nil }
+            func part(_ text: String, _ from: Int, _ to: Int) -> String {
+                let i = text.utf16.index(text.startIndex, offsetBy: from)
+                return String(text[i..<text.utf16.index(i, offsetBy: to - from)])
+            }
+            let source = part(markdown, start, end), removed = part(old.markdown, change.start, change.oldEnd)
+            let hasDollar = old.hasDollar || source.utf8.contains(36)
+            guard !source.contains("$$"), !removed.contains("$$"), !source.contains(MathExtractor.open),
+                  !hasReferenceDefinition(source) else { return nil }
+            if hasDollar {
+                // Formulas are looked for outside of the code fences the extraction sees: the part must start outside
+                // one, and leave the rest of the note as inside or outside one as before.
+                let replaced = part(old.markdown, start, after.map { o[$0].source.upperBound } ?? (old.markdown as NSString).length)
+                guard MathExtractor.openFence(after: part(markdown, 0, start)) == nil,
+                      MathExtractor.openFence(after: source) == MathExtractor.openFence(after: replaced) else { return nil }
+            }
+            // Equal heading slugs are numbered in order: the part continues the numbers of the headings before it.
+            var counts: [String: Int] = [:]
+            for base in old.headingBases[..<o[..<(before ?? 0)].reduce(0, { $0 + $1.headings })] { counts[base, default: 0] += 1 }
+            let doc = renderer.renderDocument(source, maxImageWidth: width, firstLine: before.map { o[$0].line } ?? 1,
+                                              headingsBefore: counts, endsNote: after == nil)
+            let s = doc.blocks
+            guard !doc.hasTOC, !doc.htmlCarries,
+                  doc.headings.count == s.reduce(0, { $0 + $1.headings }) else { return nil }
+            if let before, s.first?.source != NSRange(location: 0, length: o[before].source.length) { return nil }
+            if let after, s.last?.source != NSRange(location: o[after].source.location + delta - start, length: o[after].source.length) {
+                return nil
+            }
+            let lo = before == nil ? 0 : 1, hi = after == nil ? s.count : s.count - 1
+            guard lo <= hi else { return nil }
+            let from = o[a].rendered.location, to = after.map { o[$0].rendered.location } ?? o[o.count - 1].rendered.upperBound
+            let partFrom = lo < s.count ? s[lo].rendered.location : doc.text.length
+            let partTo = hi < s.count ? s[hi].rendered.location : doc.text.length
+            let shift = from - partFrom, grow = (partTo - partFrom) - (to - from)
+            let lineDelta = after.map { s[s.count - 1].line - o[$0].line } ?? 0
+
+            var blocks = Array(o[..<a])
+            blocks += s[lo..<hi].map {
+                var block = $0
+                block.source.location += start
+                block.rendered.location += shift
+                return block
+            }
+            let headingsBefore = o[..<a].reduce(0) { $0 + $1.headings }
+            let headingsAfter = after.map { o[$0...].reduce(0) { $0 + $1.headings } } ?? 0
+            let skipped = s[..<lo].reduce(0) { $0 + $1.headings }
+            let kept = skipped..<(skipped + s[lo..<hi].reduce(0) { $0 + $1.headings })
+            // The numbers of equal headings after the part stay as long as it has the same ones.
+            if after != nil, doc.headingBases[kept].sorted() != old.headingBases[headingsBefore..<(old.headings.count - headingsAfter)].sorted() {
+                return nil
+            }
+            var headings = Array(old.headings[..<headingsBefore]) + doc.headings[kept]
+            var bases = Array(old.headingBases[..<headingsBefore]) + doc.headingBases[kept]
+            if let after {
+                blocks += o[after...].map {
+                    var block = $0
+                    block.source.location += delta
+                    block.line += lineDelta
+                    block.rendered.location += grow
+                    return block
+                }
+                headings += old.headings[(old.headings.count - headingsAfter)...]
+                bases += old.headingBases[(old.headings.count - headingsAfter)...]
+            }
+            var result = old
+            result.markdown = markdown
+            result.blocks = blocks
+            result.headings = headings
+            result.headingBases = bases
+            result.sizedToWidth = old.sizedToWidth || doc.sizedToWidth
+            result.width = width
+            result.hasDollar = hasDollar
+            return Patch(range: NSRange(location: from, length: to - from),
+                         replacement: doc.text.attributedSubstring(from: NSRange(location: partFrom, length: partTo - partFrom)),
+                         lineDelta: lineDelta, length: o[o.count - 1].rendered.upperBound, result: result)
         }
 
         /// Turns `storage`, which shows `old`, into `new` by replacing only the blocks whose source changed, so the
@@ -653,7 +817,24 @@ struct MarkdownPreview: NSViewRepresentable {
             return true
         }
 
-        private static let referenceDefinition = try! NSRegularExpression(pattern: #"(?m)^ {0,3}\[[^\]]+\]:"#)
+        nonisolated private static let referenceDefinition = try! NSRegularExpression(pattern: #"(?m)^ {0,3}\[[^\]]+\]:"#)
+
+        /// Whether `markdown` defines a link reference. Looks for "]:" first: the expression alone takes most of a second
+        /// on a huge note.
+        nonisolated static func hasReferenceDefinition(_ markdown: String) -> Bool {
+            guard markdown.quickContains("]:") else { return false }
+            let text = markdown as NSString
+            var from = 0
+            while true {
+                let hit = text.range(of: "]:", options: .literal, range: NSRange(location: from, length: text.length - from))
+                guard hit.location != NSNotFound else { return false }
+                let line = text.lineRange(for: hit)
+                if referenceDefinition.firstMatch(in: markdown, range: NSRange(location: line.location, length: hit.upperBound - line.location)) != nil {
+                    return true
+                }
+                from = hit.upperBound
+            }
+        }
 
         /// The first paragraphs of a long note.
         static func start(of markdown: String) -> String { markdown.leadingParagraphs(limit: 20_000) }
@@ -666,9 +847,14 @@ struct MarkdownPreview: NSViewRepresentable {
             generation += 1
             renderedWidth = imageWidth
             let markdown = self.markdown, width = renderedWidth
+            let base = incremental && keepScroll ? shown : nil, version = shownVersion
             guard markdown.quickLength > Self.backgroundLength else {
-                show(Self.rendered(markdown, renderer, width: width), keepScroll: keepScroll, reveal: reveal,
-                     incremental: incremental)
+                if let base, let patch = Self.patch(base, to: markdown, renderer, width: width) {
+                    apply(patch, reveal: reveal)
+                } else {
+                    show(Self.rendered(markdown, renderer, width: width), keepScroll: keepScroll, reveal: reveal,
+                         incremental: incremental)
+                }
                 return
             }
             if !keepScroll {
@@ -686,12 +872,22 @@ struct MarkdownPreview: NSViewRepresentable {
             let background = renderer
             let token = generation
             renderQueue.async { [weak self] in
-                let result = Self.rendered(markdown, background, width: width)
+                // Typing renders only the blocks around the change: a whole huge note takes seconds.
+                let patch = base.flatMap { Self.patch($0, to: markdown, background, width: width) }
+                let result = patch == nil ? Self.rendered(markdown, background, width: width) : nil
                 RunLoop.main.perform(inModes: [.common]) {
                     MainActor.assumeIsolated {
                         guard let self else { return }
                         self.rendering = false
-                        if self.generation == token { self.show(result, keepScroll: true, reveal: reveal, incremental: incremental) }
+                        if self.generation == token {
+                            if let result {
+                                self.show(result, keepScroll: true, reveal: reveal, incremental: incremental)
+                            } else if let patch, self.shownVersion == version {
+                                self.apply(patch, reveal: reveal)
+                            } else if self.renderAgain == nil {
+                                self.renderAgain = (reveal, true)
+                            }
+                        }
                         if let again = self.renderAgain {
                             self.renderAgain = nil
                             self.render(keepScroll: true, reveal: again.reveal, incremental: again.incremental)
@@ -707,6 +903,7 @@ struct MarkdownPreview: NSViewRepresentable {
             sizedToWidth = result.sizedToWidth
             defer {
                 shown = result
+                shownVersion += 1
                 tv.blocks = result.blocks
                 tv.onShow?()
             }
@@ -725,6 +922,32 @@ struct MarkdownPreview: NSViewRepresentable {
             } else if !keepScroll {
                 tv.scrollToBeginningOfDocument(nil)
             }
+            if reveal { revealFirstMatch() }
+        }
+
+        private func apply(_ patch: Patch, reveal: Bool) {
+            guard let tv = textView, let storage = tv.textStorage else { return }
+            guard storage.length == patch.length else {
+                render(keepScroll: true, reveal: reveal)
+                return
+            }
+            defer { lastRender = Date() }
+            if patch.lineDelta != 0 {
+                let rest = NSRange(location: patch.range.upperBound, length: storage.length - patch.range.upperBound)
+                storage.enumerateAttribute(.jnCheckbox, in: rest) { value, _, _ in (value as? CheckboxLine)?.line += patch.lineDelta }
+            }
+            if patch.range.length > 0 || patch.replacement.length > 0 {
+                storage.beginEditing()
+                storage.replaceCharacters(in: patch.range, with: patch.replacement)
+                storage.endEditing()
+            }
+            var result = patch.result
+            result.text = storage
+            sizedToWidth = result.sizedToWidth
+            shown = result
+            shownVersion += 1
+            tv.blocks = result.blocks
+            tv.onShow?()
             if reveal { revealFirstMatch() }
         }
 

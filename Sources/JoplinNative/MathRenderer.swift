@@ -17,15 +17,40 @@ enum MathExtractor {
         pattern: #"(?<![\\$\w])\$\$(?=\S)(.+?)(?<=\S)\$\$|(?<![\\$\w])\$(?=[^\s$])([^$\n]*?[^\s\\$])\$(?![\w$])"#)
 
     static func extract(_ markdown: String) -> (String, [Formula]) {
-        guard markdown.contains("$") else { return (markdown, []) }
+        guard markdown.quickContains("$") else { return (markdown, []) }
         var formulas: [Formula] = []
-        var lines = markdown.components(separatedBy: "\n")
-        var fence: String?
-        var i = 0
+        let original = markdown.components(separatedBy: "\n")
+        var lines = original
         func token(_ tex: String, display: Bool) -> String {
             formulas.append(Formula(tex: tex, display: display))
             return "\(open)\(formulas.count - 1)\(close)"
         }
+        scan(original, display: { i, end in
+            // Display block: "$$" lines around the formula. The formula moves to the first line and the
+            // others become empty, which also separates it from surrounding paragraphs.
+            let tex = original[(i + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+            let indent = String(original[i].prefix { $0 == " " || $0 == "\t" })
+            lines[i] = indent + token(tex, display: true)
+            for j in (i + 1)...end { lines[j] = "" }
+        }, inline: { i in
+            lines[i] = replaceInline(lines[i], token: token)
+        })
+        return (lines.joined(separator: "\n"), formulas)
+    }
+
+    /// The code fence the extraction is inside of after `text`, which starts inside `fence`. The extraction tracks
+    /// fences on its own, a little differently from Markdown.
+    static func openFence(after text: String, from fence: String? = nil) -> String? {
+        scan(text.utf8.split(separator: 10, omittingEmptySubsequences: false).map { Substring($0) }, from: fence)
+    }
+
+    /// Walks the lines as the extraction does: `display` gets the first and last line of each `$$` block, `inline`
+    /// each line outside of code fences and blocks. Returns the fence open at the end.
+    @discardableResult
+    private static func scan<Line: StringProtocol>(_ lines: [Line], from fence: String? = nil, display: (Int, Int) -> Void = { _, _ in },
+                                                   inline: (Int) -> Void = { _ in }) -> String? {
+        var fence = fence
+        var i = 0
         while i < lines.count {
             let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
             if let f = fence {
@@ -38,22 +63,15 @@ enum MathExtractor {
                 i += 1
                 continue
             }
-            if trimmed == "$$" {
-                // Display block: "$$" lines around the formula. The formula moves to the first line and the
-                // others become empty, which also separates it from surrounding paragraphs.
-                if let end = lines[(i + 1)...].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "$$" }) {
-                    let tex = lines[(i + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-                    let indent = String(lines[i].prefix { $0 == " " || $0 == "\t" })
-                    lines[i] = indent + token(tex, display: true)
-                    for j in (i + 1)...end { lines[j] = "" }
-                    i = end + 1
-                    continue
-                }
+            if trimmed == "$$", let end = lines[(i + 1)...].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "$$" }) {
+                display(i, end)
+                i = end + 1
+                continue
             }
-            lines[i] = replaceInline(lines[i], token: token)
+            inline(i)
             i += 1
         }
-        return (lines.joined(separator: "\n"), formulas)
+        return fence
     }
 
     /// Replaces inline formulas outside of code spans.

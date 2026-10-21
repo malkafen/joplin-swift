@@ -2,7 +2,8 @@ import AppKit
 
 /// Debug aid: JN_STRESS_LOG=/path.json runs the stress scenario of `scripts/stress` (the same steps `jbench.py` drives
 /// in Joplin Desktop), writes the measures there and quits. `ready` is ms until the expected result is on screen,
-/// `freeze` the longest main-thread run loop pass and `settled` when the last pass over 100 ms ended.
+/// `freeze` the longest main-thread run loop pass, `settled` when the last pass over 100 ms ended and `at` the Unix time
+/// of the log (`sample.py` measures CPU and memory between them).
 @MainActor
 enum StressProbe {
     static var segments: [(start: Double, end: Double)] = []
@@ -54,7 +55,7 @@ enum StressProbe {
     }
 
     static func log(_ step: String, _ kw: [String: Any]) {
-        var kw = kw; kw["step"] = step
+        var kw = kw; kw["step"] = step; kw["at"] = Date().timeIntervalSince1970
         out.append(kw)
         if let d = try? JSONSerialization.data(withJSONObject: kw), let s = String(data: d, encoding: .utf8) { print(s) }
     }
@@ -74,7 +75,7 @@ enum StressProbe {
         let launchedAt = Double(env["JN_STRESS_T0"] ?? "") ?? 0
         t0 = CFAbsoluteTimeGetCurrent()
         _ = await until { !model.notes.isEmpty && model.searchStepper.editor?.window?.isVisible == true }
-        log("launch", ["ready": Int((Date().timeIntervalSince1970 - launchedAt) * 1000)])
+        log("launch", ["ready": Int((Date().timeIntervalSince1970 - launchedAt) * 1000), "start": launchedAt])
         await sleep(10)
         log("memory_idle", ["mb": memory(), "processes": 1])
         var lengths: [String: Int] = [:]
@@ -137,9 +138,11 @@ enum StressProbe {
             editor.moveLeft(nil)
             await sleep(1)
             var lat: [Double] = []
+            var lastKey = 0.0
             mark()
             for ch in "abcde" {
                 let s = CFAbsoluteTimeGetCurrent()
+                lastKey = now()
                 editor.insertText(String(ch), replacementRange: editor.selectedRange())
                 // Until the run loop pass that handles the key (and draws) ends.
                 let n = segments.count
@@ -147,11 +150,11 @@ enum StressProbe {
                 lat.append(((segments.last.map { $0.end > s ? $0.end : CFAbsoluteTimeGetCurrent() } ?? CFAbsoluteTimeGetCurrent()) - s) * 1000)
                 await sleep(0.25)
             }
-            let typedEnd = now()
+            // From the last key, as jbench.py does.
             let up = await until { previewTail(typed) }
             let ls = lat.sorted()
             log("typing_split", ["note": name, "key_median": r(ls[ls.count / 2]), "key_max": r(ls.last),
-                                 "preview_updated": r(up.map { $0 - typedEnd }), "freeze": await freeze(), "settled": settled])
+                                 "preview_updated": r(up.map { $0 - lastKey }), "freeze": await freeze(), "settled": settled])
             _ = await layout(.preview)
             log("to_preview", ["note": name, "ready": r(await until { previewTail(typed) }), "freeze": await freeze(), "settled": settled])
             log("to_editor", ["note": name, "ready": r(await layout(.editor)), "freeze": await freeze(), "settled": settled])

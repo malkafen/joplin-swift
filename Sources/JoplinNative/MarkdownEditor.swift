@@ -172,6 +172,14 @@ extension String {
     /// view. Either way of counting converts the other kind of string as a whole.
     var quickLength: Int { utf8.withContiguousStorageIfAvailable(\.count) ?? (self as NSString).length }
 
+    /// Whether the text holds `ascii`, without converting it: the bytes of a native string, the UTF-16 of one bridged
+    /// from a text view. `contains` reads characters, and NSString's search reads a native string one unit at a time.
+    func quickContains(_ ascii: String) -> Bool {
+        let needle = Array(ascii.utf8)
+        return utf8.withContiguousStorageIfAvailable { memmem($0.baseAddress, $0.count, needle, needle.count) != nil }
+            ?? ((self as NSString).range(of: ascii, options: .literal).location != NSNotFound)
+    }
+
     /// The first paragraphs, about `limit` long, cut before a blank line when there is one.
     func leadingParagraphs(limit: Int) -> String {
         guard quickLength > limit else { return self }
