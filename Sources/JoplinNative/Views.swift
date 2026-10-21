@@ -276,6 +276,12 @@ struct NoteListView: View {
             if model.notes.isEmpty {
                 if !model.searchText.isEmpty {
                     ContentUnavailableView.search(text: model.searchText)
+                } else if model.isNothingChosen {
+                    ContentUnavailableView {
+                        Label("No Notebook Selected", systemImage: "sidebar.left")
+                    } description: {
+                        Text("Choose a notebook, a tag or All Notes in the sidebar, or press ⌘L to search.")
+                    }
                 } else if model.isTrashSelected {
                     ContentUnavailableView("Trash Is Empty", systemImage: "trash")
                 } else {
@@ -302,7 +308,7 @@ struct NoteListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .navigationTitle(model.listTitle)
-        .navigationSubtitle(model.notes.count == 1 ? "1 note" : "\(model.notes.count) notes")
+        .navigationSubtitle(model.isNothingChosen ? "" : model.notes.count == 1 ? "1 note" : "\(model.notes.count) notes")
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search all notes")
         // Return / ⇧Return step through the matches in the note.
         .onSubmit(of: .search) { model.stepMatch(forward: !NSEvent.modifierFlags.contains(.shift)) }

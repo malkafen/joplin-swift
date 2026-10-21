@@ -293,6 +293,25 @@ import Testing
         #expect(h.store.note(id: first.id) != nil)
     }
 
+    /// The app starts with nothing chosen in the sidebar, the notebooks collapsed and no note open.
+    @Test func startsWithNothingChosen() throws {
+        let h = try ModelHarness(defaults: { $0.set(["x"], forKey: "expandedFolders") })
+        let model = AppModel(store: h.store, defaults: h.defaults, pasteboard: h.pasteboard, syncTransport: h.server, startsEmpty: true)
+        #expect(model.sidebarSelection == nil && model.isNothingChosen)
+        #expect(model.notes.isEmpty && model.selectedNoteIDs.isEmpty && model.currentNote == nil)
+        #expect(model.expandedFolders.isEmpty && model.listTitle == "Notes")
+        model.sidebarSelection = .allNotes
+        #expect(!model.notes.isEmpty && model.currentNote != nil && model.listTitle == "All Notes")
+        // Choosing nothing again empties the list; a search still lists what it finds.
+        model.sidebarSelection = nil
+        #expect(model.notes.isEmpty && model.currentNote == nil)
+        model.searchDelay = 0
+        model.searchText = "Joplin"
+        #expect(!model.isNothingChosen && !model.notes.isEmpty)
+        // Other models (the tests') still start on All Notes with its first note.
+        #expect(h.model.sidebarSelection == .allNotes && h.model.currentNote != nil)
+    }
+
     @Test func todoAndMoveActions() throws {
         let h = try ModelHarness(welcome: false)
         let a = try h.store.createFolder(title: "A")

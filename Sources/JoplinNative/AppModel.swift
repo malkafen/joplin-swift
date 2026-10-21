@@ -229,9 +229,8 @@ final class AppModel {
     }
 
     /// Notebooks expanded in the sidebar, remembered between launches.
-    var expandedFolders: Set<String> = [] {
-        didSet { defaults.set(Array(expandedFolders).sorted(), forKey: "expandedFolders") }
-    }
+    /// Notebooks open in the sidebar. Not kept between launches: the app starts with the tree collapsed.
+    var expandedFolders: Set<String> = []
 
     func expansion(of id: String) -> Binding<Bool> {
         Binding(get: { self.expandedFolders.contains(id) },
@@ -415,8 +414,10 @@ final class AppModel {
     /// Delay between a local change and the automatic sync that sends it.
     @ObservationIgnored var autoSyncDelay: Duration = .seconds(10)
 
+    /// `startsEmpty`: nothing chosen in the sidebar and no note open, as the app starts; otherwise All Notes with its
+    /// first note.
     init(store: Store, defaults: UserDefaults = .standard, pasteboard: NSPasteboard = .general,
-         syncTransport: HTTPTransport = URLSessionTransport(),
+         syncTransport: HTTPTransport = URLSessionTransport(), startsEmpty: Bool = false,
          openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }) {
         self.store = store
         self.defaults = defaults
@@ -443,7 +444,6 @@ final class AppModel {
         trashExpanded = defaults.bool(forKey: "trashExpanded")
         vimMode = defaults.bool(forKey: "vimMode")
         stickyNotebooks = defaults.object(forKey: "stickyNotebooks") as? Bool ?? true
-        expandedFolders = Set(defaults.stringArray(forKey: "expandedFolders") ?? [])
         for action in ShortcutAction.allCases {
             guard let stored = defaults.string(forKey: action.defaultsKey) else { continue }
             let hotkey = Hotkey(storage: stored)
@@ -462,8 +462,9 @@ final class AppModel {
             createWelcomeContent()
             store.setSetting("welcome_created", "1")
         }
+        if startsEmpty { sidebarSelection = nil }
         reloadSidebar()
-        reloadNotes(selectFirst: true)
+        reloadNotes(selectFirst: !startsEmpty)
     }
 
     static func makeDefault(
@@ -471,7 +472,7 @@ final class AppModel {
     ) -> AppModel {
         let dir = base.appendingPathComponent("JoplinNative", isDirectory: true)
         do {
-            return AppModel(store: try Store(directory: dir))
+            return AppModel(store: try Store(directory: dir), startsEmpty: true)
         } catch {
             fatalError("Cannot open database at \(dir.path): \(error)")
         }
@@ -539,7 +540,8 @@ final class AppModel {
         case .folder(let id): return folders.first { $0.id == id }?.title ?? "Notebook"
         case .tag(let id): return tags.first { $0.id == id }.map { "#\($0.title)" } ?? "Tag"
         case .trash: return "Trash"
-        default: return "All Notes"
+        case .allNotes: return "All Notes"
+        case nil: return "Notes"
         }
     }
 
@@ -552,9 +554,12 @@ final class AppModel {
         folders.first { $0.id == id }?.title ?? "No notebook"
     }
 
+    /// Nothing is chosen in the sidebar and nothing searched: the list stays empty.
+    var isNothingChosen: Bool { sidebarSelection == nil && searchText.trimmingCharacters(in: .whitespaces).isEmpty }
+
     func reloadNotes(selectFirst: Bool) {
         flushSave()
-        notes = store.notes(filter: currentFilter, sort: sort, uncompletedTodosOnTop: uncompletedTodosOnTop)
+        notes = isNothingChosen ? [] : store.notes(filter: currentFilter, sort: sort, uncompletedTodosOnTop: uncompletedTodosOnTop)
         let visible = Set(notes.map(\.id))
         let valid = selectedNoteIDs.intersection(visible)
         if valid.isEmpty, selectFirst, let first = notes.first {
