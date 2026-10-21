@@ -138,6 +138,30 @@ final class AppModel {
         searchStepper.step(forward: forward, in: tv)
     }
 
+    /// Opens the find bar of the open note: in the preview when it has the focus or is all that is shown, otherwise in
+    /// the editor. Beeps without a note.
+    func findInNote(in window: NSWindow? = nil) {
+        let preview = searchStepper.preview
+        let inPreview = layout == .preview || (preview != nil && window?.firstResponder === preview)
+        guard currentNote != nil, let tv = inPreview ? preview : searchStepper.editor, let window = tv.window else {
+            NSSound.beep()
+            return
+        }
+        window.makeFirstResponder(tv)
+        let item = NSMenuItem()
+        item.tag = NSTextFinder.Action.showFindInterface.rawValue
+        tv.performTextFinderAction(item)
+    }
+
+    /// ⌘F in the note window finds in the open note, wherever the focus is: from the note list or the sidebar, Find
+    /// would otherwise go to the toolbar search field, which searches all notes (that is ⌘L). False for other keys.
+    func handleFindShortcut(_ event: NSEvent) -> Bool {
+        guard Hotkey(event: event) == Hotkey(key: "f", command: true),
+              event.window?.toolbar?.items.contains(where: { $0 is NSSearchToolbarItem }) == true else { return false }
+        findInNote(in: event.window)
+        return true
+    }
+
     /// Lists the notes found by the search typed so far.
     func searchNow() {
         pendingSearch?.cancel()
