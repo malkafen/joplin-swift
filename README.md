@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/icon.png" alt="Joplin Native icon: sheet music with a gold note above piano keys" width="128">
+
 # Joplin Native
 
 **A native macOS client for [Joplin](https://joplinapp.org) notes, written in Swift.**
