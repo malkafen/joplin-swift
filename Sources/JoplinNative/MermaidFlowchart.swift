@@ -155,7 +155,7 @@ struct Flowchart {
             case "}":
                 flush()
                 return (attributes, length)
-            case "\"", "'" where !inKey:
+            case "\"" where !inKey, "'" where !inKey:
                 quote = c
             case ":" where inKey:
                 inKey = false
