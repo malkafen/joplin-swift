@@ -25,7 +25,6 @@ public enum SyncError: Error, Equatable, CustomStringConvertible {
     }
 }
 
-/// Sends HTTP requests. Injected so that tests can run against an in-memory server.
 public protocol HTTPTransport: Sendable {
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse)
 }
@@ -48,7 +47,6 @@ public struct DeltaItem: Sendable, Equatable {
     public enum Change: Int, Sendable { case create = 1, update = 2, delete = 3 }
     public var name: String
     public var change: Change
-    /// `updated_time` of the Joplin item inside the file (0 when unknown, e.g. for deletions).
     public var itemUpdatedTime: Int64
 }
 
@@ -58,8 +56,6 @@ public struct DeltaPage: Sendable {
     public var hasMore: Bool
 }
 
-/// REST client for Joplin Server (`packages/server`), the API used by Joplin's "Joplin Server" sync target.
-/// Requests may run concurrently; only the session id is shared between them.
 public final class JoplinServerClient: @unchecked Sendable {
     public let baseURL: URL
     let email: String
@@ -117,7 +113,6 @@ public final class JoplinServerClient: @unchecked Sendable {
         sessionId = id
     }
 
-    /// Performs an authenticated request. A rejected session is renewed once (sessions expire on the server).
     @discardableResult
     func request(_ method: String, _ path: String, query: [URLQueryItem] = [], body: Data? = nil,
                  allowNotFound: Bool = false) async throws -> (data: Data, status: Int) {
@@ -145,7 +140,6 @@ public final class JoplinServerClient: @unchecked Sendable {
         throw SyncError.invalidResponse("request retry failed")
     }
 
-    /// File content, or nil when it does not exist.
     public func get(_ name: String) async throws -> Data? {
         let (data, status) = try await request("GET", Self.itemPath(name) + "/content", allowNotFound: true)
         return status == 404 ? nil : data
@@ -174,7 +168,6 @@ public final class JoplinServerClient: @unchecked Sendable {
         return DeltaPage(items: items, cursor: obj["cursor"] as? String ?? cursor, hasMore: obj["has_more"] as? Bool ?? false)
     }
 
-    /// Joplin lock types: 1 = sync, 2 = exclusive. Client type 1 = desktop.
     public func acquireSyncLock(clientId: String) async throws {
         let body = try JSONSerialization.data(withJSONObject: ["type": 1, "clientType": 1, "clientId": clientId])
         do {

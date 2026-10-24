@@ -19,10 +19,7 @@ public struct SyncReport: Sendable, Equatable, CustomStringConvertible {
     }
 }
 
-// MARK: - Store bookkeeping
-
 public extension Store {
-    /// Upload order: parents before children, attachments before the notes that link them.
     static let uploadOrder: [ModelType] = [.folder, .tag, .resource, .note, .noteTag]
 
     func syncTime(id: String) -> Int64? {
@@ -36,7 +33,6 @@ public extension Store {
             """, [id, type.rawValue, time])
     }
 
-    /// Items created or changed since their last sync.
     func itemsToUpload() throws -> [(type: ModelType, row: Row)] {
         var out: [(ModelType, Row)] = []
         for type in Store.uploadOrder {
@@ -61,12 +57,10 @@ public extension Store {
         try db.run("DELETE FROM deleted_items WHERE id = ?", [rowId])
     }
 
-    /// Type of a locally stored item, looked up by id.
     func localType(of id: String) -> ModelType? {
         ModelType.syncable.first { exists($0, id: id) }
     }
 
-    /// Removes an item deleted on another client, without recording a deletion to send back.
     func applyRemoteDeletion(id: String) throws {
         guard let type = localType(of: id), let table = type.table else { return }
         if type == .resource, let r = resource(id: id) {
@@ -79,7 +73,6 @@ public extension Store {
         }
     }
 
-    /// True when the local copy changed after its last sync (or was never synced).
     func isDirty(id: String) -> Bool {
         guard let type = localType(of: id), let row = row(type, id: id) else { return false }
         guard let synced = syncTime(id: id) else { return true }
@@ -87,13 +80,6 @@ public extension Store {
     }
 }
 
-// MARK: - Engine
-
-/// Two-way synchronisation with a Joplin Server sync target, using Joplin's item format so that the official apps
-/// see the same notebooks, notes, tags and attachments.
-///
-/// One run: lock, pull remote changes from the delta cursor, send local deletions, upload local changes, unlock.
-/// Conflicting note edits keep the remote version and save the local one as a copy, like Joplin does.
 @MainActor
 public final class SyncEngine {
     public static let supportedSyncVersion = 3
@@ -138,7 +124,6 @@ public final class SyncEngine {
         return report
     }
 
-    /// Reads `info.json` (Joplin sync target info), creating it on an empty target.
     func checkSyncInfo() async throws {
         guard let data = try await client.get("info.json") else {
             let info: [String: Any] = [
@@ -161,8 +146,6 @@ public final class SyncEngine {
             throw SyncError.encryptionEnabled
         }
     }
-
-    // MARK: Pull
 
     func pull(_ report: inout SyncReport) async throws {
         var cursor = store.setting(Self.cursorKey) ?? ""
@@ -202,11 +185,8 @@ public final class SyncEngine {
         }
     }
 
-    /// Downloads at a time while pulling. Each request mostly waits for the network, so a first sync of thousands of
-    /// items is bound by the round trips, not by this client.
     static let parallelDownloads = 8
 
-    /// Contents of the named files (nil for files that are gone), fetched concurrently.
     func fetch(_ names: [String]) async throws -> [String: Data?] {
         let client = self.client
         var out: [String: Data?] = [:]
@@ -226,7 +206,6 @@ public final class SyncEngine {
         return out
     }
 
-    /// Whether this client already has the version, including its own uploads coming back through the delta.
     private func hasVersion(id: String, itemUpdatedTime: Int64) -> Bool {
         guard itemUpdatedTime > 0, let type = store.localType(of: id) else { return false }
         return store.syncTime(id: id) == itemUpdatedTime || store.row(type, id: id)?.int("updated_time") == itemUpdatedTime
@@ -275,7 +254,7 @@ public final class SyncEngine {
                     report.conflicts += 1
                 }
             } else if localTime > remoteTime {
-                return // The local change is newer and is uploaded in this run.
+                return
             }
         }
 
@@ -293,7 +272,6 @@ public final class SyncEngine {
         report.downloaded += 1
     }
 
-    /// Keeps a locally edited note that conflicts with a remote edit as a separate, unsynced note.
     private func saveConflictCopy(of local: Row) throws {
         var fields = local.values
         let now = Store.now()
@@ -306,8 +284,6 @@ public final class SyncEngine {
         try store.upsert(.note, fields)
         for tag in store.tags(forNote: local.string("id")) { try store.addTag(tagId: tag.id, toNote: newId) }
     }
-
-    // MARK: Push
 
     func pushDeletions(_ report: inout SyncReport) async throws {
         for deletion in try store.pendingDeletions() {

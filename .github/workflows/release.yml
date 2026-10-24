@@ -1,8 +1,5 @@
 name: Release
 
-# Releases mirror upstream Joplin: a tag is accepted only if laurent22/joplin has a release with the same name,
-# and the release is marked pre-release when upstream's is. Native-only revisions between upstream releases are
-# tagged vX.Y.Z-N, where vX.Y.Z must be an upstream release.
 on:
   push:
     tags: ["v*.*.*"]

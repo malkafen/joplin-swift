@@ -15,7 +15,6 @@ public enum SQLiteError: Error, CustomStringConvertible {
     }
 }
 
-/// One result row. Values are Int64, Double, String, Data or NSNull.
 public struct Row {
     public let values: [String: Any]
 
@@ -51,7 +50,6 @@ public struct Row {
     public func bool(_ key: String) -> Bool { int(key) != 0 }
 }
 
-/// Minimal synchronous wrapper over the system libsqlite3.
 public final class SQLiteDB {
     private var handle: OpaquePointer?
     private static let transient = unsafeBitCast(-1, to: sqlite3_destructor_type.self)

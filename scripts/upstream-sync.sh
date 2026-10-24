@@ -1,7 +1,4 @@
 #!/bin/bash
-# Opens a tracking issue for every upstream Joplin desktop release this repository has not mirrored yet.
-#   GH_TOKEN=... scripts/upstream-sync.sh   (runs daily in .github/workflows/upstream-sync.yml)
-#   DRY_RUN=1 scripts/upstream-sync.sh      print what would be opened, change nothing
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -9,7 +6,6 @@ UPSTREAM=laurent22/joplin
 REPO=${GITHUB_REPOSITORY:-$(gh repo view --json nameWithOwner -q .nameWithOwner)}
 LABEL=upstream-sync
 
-# Desktop releases use plain vX.Y.Z tags; android-*, ios-*, server-* belong to other Joplin apps.
 releases=$(gh api "repos/$UPSTREAM/releases?per_page=50" --jq '
   .[] | select(.draft | not) | select(.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))
   | [.tag_name, (.prerelease | tostring), .html_url] | @tsv' | sort -t$'\t' -k1,1V)
@@ -19,7 +15,6 @@ newer() { [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail 
 
 ours=$(git tag --list 'v*.*.*' --sort=-v:refname | head -1)
 if [ -z "$ours" ]; then
-  # Nothing mirrored yet: start from the newest upstream release only.
   candidates=$(tail -1 <<<"$releases")
 else
   candidates=$(while IFS=$'\t' read -r tag pre url; do

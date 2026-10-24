@@ -99,7 +99,6 @@ import Testing
         let attachment = try #require(s.attribute(.attachment, at: 0, effectiveRange: nil) as? NSTextAttachment)
         #expect(attachment.bounds.width == 0.5)
         #expect(s.attribute(.link, at: 0, effectiveRange: nil) as? URL == URL(string: "joplinitem://\(image.id)"))
-        // Served from the cache the second time.
         #expect(render("![](:/\(image.id))").attribute(.attachment, at: 0, effectiveRange: nil) != nil)
 
         #expect(render("![](:/\(brokenImage.id))").string == "📎 broken.png")
@@ -236,9 +235,8 @@ import Testing
         #expect(bodyWeight < NSFontManager.shared.weight(of: try #require(font(of: "Left", in: s))))
         let cell = try #require(paragraph(of: "short", in: s)?.textBlocks.last as? NSTextTableBlock)
         #expect(cell.startingRow == 2)
-        #expect(cell.backgroundColor != nil) // striped
+        #expect(cell.backgroundColor != nil)
         #expect((paragraph(of: "d", in: s)?.textBlocks.last as? NSTextTableBlock)?.backgroundColor == nil)
-        // 4 header cells + 3 rows of 4 cells.
         #expect(s.string.components(separatedBy: "\n").count == 16)
     }
 
@@ -324,14 +322,12 @@ import Testing
         #expect(s.string.contains("(a\u{2005}+\u{2005}b)⁄2\u{2004}≤\u{2004}√x"))
         #expect(s.string.contains("ei𝜋\u{2005}+\u{2005}1\u{2004}=\u{2004}0") || s.string.contains("eiπ\u{2005}+\u{2005}1\u{2004}=\u{2004}0"))
         #expect(paragraph(of: "⁄2", in: s)?.alignment == .center)
-        // Line numbers survive the extraction: the checkbox still points at line 7.
         let box = (s.string as NSString).range(of: "\u{FFFC}", options: .backwards)
         #expect((s.attribute(.jnCheckbox, at: box.location, effectiveRange: nil) as? CheckboxLine)?.line == 7)
         let fenced = render("```math\nx_1^2\n```")
         #expect(fenced.string == "x12")
         #expect((fenced.attribute(.baselineOffset, at: 1, effectiveRange: nil) as? CGFloat ?? 0) < 0)
         #expect((fenced.attribute(.baselineOffset, at: 2, effectiveRange: nil) as? CGFloat ?? 0) > 0)
-        // Markdown keeps the fence open at "```swift", the extraction closes it: the formula stays literal in the code.
         #expect(render("```\n```swift\nlet a = $x$\n```").string.contains("let a = $x$"))
         let titled = MarkdownRenderer(baseSize: 14) { _ in nil }.renderDocument("$a$ and $b$\n\n# Area $b^2$")
         #expect(titled.headings == ["area-b2"])

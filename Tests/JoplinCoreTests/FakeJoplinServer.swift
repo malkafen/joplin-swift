@@ -1,7 +1,6 @@
 import Foundation
 import JoplinCore
 
-/// In-memory stand-in for Joplin Server's REST API (sessions, items, delta, locks), as observed on server 3.7.
 final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
     struct Change {
         var name: String
@@ -17,9 +16,7 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
     private(set) var sessions: Set<String> = []
     private(set) var locks: [String: (type: Int, clientId: String)] = [:]
     private(set) var requests: [String] = []
-    /// Items per delta page.
     var pageSize = 1000
-    /// Status code returned for the next request whose "METHOD path" contains the key.
     var failures: [String: Int] = [:]
 
     init(email: String = "user@example.com", password: String = "secret") {
@@ -35,7 +32,6 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
 
     var itemNames: [String] { lock.withLock { files.keys.filter { $0.hasSuffix(".md") }.sorted() } }
 
-    /// Stores a file as another client would, recording a change.
     func seed(_ name: String, _ content: String) {
         lock.withLock { store(name, Data(content.utf8)) }
     }
@@ -75,7 +71,6 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
     }
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        // URLSession fails requests of a cancelled task with NSURLErrorCancelled (-999).
         if Task.isCancelled { throw URLError(.cancelled) }
         let url = request.url!
         let (data, status) = lock.withLock { handle(request, url) }

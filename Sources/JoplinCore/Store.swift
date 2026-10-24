@@ -1,7 +1,6 @@
 import Foundation
 import UniformTypeIdentifiers
 
-/// Local note database. All access is synchronous and expected on the main thread.
 public final class Store {
     public let db: SQLiteDB
     public let directory: URL
@@ -18,14 +17,10 @@ public final class Store {
 
     public static func now() -> Int64 { Int64((Date().timeIntervalSince1970 * 1000).rounded()) }
 
-    /// Joplin ids: 32 lowercase hex chars (uuid without dashes).
     public static func newId() -> String {
         UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
-    // MARK: - Generic item access
-
-    /// Inserts or updates an item. Missing columns get schema defaults on insert and are left untouched on update.
     public func upsert(_ type: ModelType, _ fields: [String: Any]) throws {
         guard let table = type.table, let defs = Schema.fields[type] else { return }
         var values = fields
@@ -67,8 +62,6 @@ public final class Store {
         Array(repeating: "?", count: count).joined(separator: ", ")
     }
 
-    // MARK: - Settings
-
     public func setting(_ key: String) -> String? {
         try? db.query("SELECT value FROM settings WHERE key = ?", [key]).first?.string("value")
     }
@@ -77,9 +70,6 @@ public final class Store {
         try? db.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value])
     }
 
-    // MARK: - Folders
-
-    /// Sorted like Finder: case-insensitive, numbers by value ("Folder 2" before "Folder 10").
     public func folders(deleted: Bool = false) -> [Folder] {
         let clause = deleted ? "deleted_time > 0" : "deleted_time = 0 AND encryption_applied = 0"
         let rows = (try? db.query("SELECT * FROM folders WHERE \(clause)")) ?? []
@@ -90,7 +80,6 @@ public final class Store {
         row(.folder, id: id).map(Folder.init(row:))
     }
 
-    /// Number of non-deleted notes directly inside each folder.
     public func noteCountsByFolder() -> [String: Int] {
         let rows = (try? db.query("SELECT parent_id, COUNT(*) AS c FROM notes WHERE deleted_time = 0 AND is_conflict = 0 GROUP BY parent_id")) ?? []
         var out: [String: Int] = [:]
@@ -131,7 +120,6 @@ public final class Store {
         return result
     }
 
-    /// Moves a folder, its sub-folders and their notes to the trash (Joplin's deleted_time).
     public func trashFolder(id: String) throws {
         let now = Store.now()
         let ids = [id] + descendantFolderIds(of: id)
@@ -175,8 +163,6 @@ public final class Store {
             for fid in ids { try recordDeletion(.folder, fid) }
         }
     }
-
-    // MARK: - Notes
 
     public func notes(filter: NoteFilter, sort: NoteSort, uncompletedTodosOnTop: Bool = true, showCompletedTodos: Bool = true) -> [NoteSummary] {
         var clauses: [String] = []
@@ -225,18 +211,13 @@ public final class Store {
         return summaries
     }
 
-    /// Search results that get the text around the first match instead of the start of the note. snippet() is costly
-    /// per note, and with a short prefix nearly every note matches: the rest keep the start of the note.
     static let snippetRows = 200
 
     private func snippetSearchResults(_ summaries: inout [NoteSummary], rows: [Row], search: String) {
-        // A prefix of one or two letters matches nearly every note, and FTS5 then merges the positions of all the
-        // words it starts: the start of the note says as much.
         let words = search.split(whereSeparator: { $0.isWhitespace })
             .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'*")) }
         guard words.allSatisfy({ $0.count >= 3 }) else { return }
         let first = rows.indices.prefix(Store.snippetRows)
-        // snippet() tokenizes the whole note, which takes seconds for a huge one: those are excerpted instead.
         let short = first.filter { rows[$0].int("long") == 0 }
         if !short.isEmpty {
             let index = Dictionary(uniqueKeysWithValues: short.map { (rows[$0].int("rowid"), $0) })
@@ -254,16 +235,12 @@ public final class Store {
         }
     }
 
-    /// Notes longer than this (in UTF-8 bytes, which SQLite knows without reading the text) get their search snippet
-    /// from `excerpt`.
     static let longNote = 50_000
 
-    /// The text around the first occurrence of a search word (ignoring case and diacritics, like the index).
     func excerpt(noteId: String, around search: String) -> String {
         let words = search.split(whereSeparator: { $0.isWhitespace })
             .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'*")) }
             .filter { !$0.isEmpty }
-        // SQLite finds the usual spellings without turning the whole note into a string; any match will do.
         var spellings: [String] = []
         for w in words {
             for s in [w, w.lowercased(), w.capitalized, w.uppercased()] where !spellings.contains(s) { spellings.append(s) }
@@ -277,7 +254,6 @@ public final class Store {
             let more = text.count > 400
             return (start > 1 ? "…" : "") + (more ? String(text.prefix(400)) : text) + (more ? "…" : "")
         }
-        // Other spellings (accents, mixed case) are looked for in the start of the note only.
         guard let body = try? db.query("SELECT substr(body, 1, 200000) AS body FROM notes WHERE id = ?", [noteId])
             .first?.string("body") else { return "" }
         let ns = body as NSString
@@ -305,7 +281,6 @@ public final class Store {
         Int((try? db.scalarInt("SELECT COUNT(*) FROM notes WHERE deleted_time = 0 AND is_conflict = 0")) ?? 0)
     }
 
-    /// Notes listed in the trash.
     public var trashedNoteCount: Int {
         Int((try? db.scalarInt("SELECT COUNT(*) FROM notes WHERE deleted_time > 0 AND encryption_applied = 0")) ?? 0)
     }
@@ -322,12 +297,10 @@ public final class Store {
         return note(id: id)!
     }
 
-    /// Saves user-editable fields and bumps the modification times.
     public func saveNote(_ note: Note, at time: Int64 = Store.now()) throws {
         try Store.saveNote(note, in: db, at: time)
     }
 
-    /// Which version of a note's body the database holds, found without reading the body.
     public struct BodyStamp: Equatable, Sendable {
         public var updatedTime: Int64
         public var size: Int64
@@ -343,7 +316,6 @@ public final class Store {
         }
     }
 
-    /// The note and the version of its body, from one read.
     public func noteAndStamp(id: String) -> (note: Note, stamp: BodyStamp)? {
         guard let row = row(.note, id: id) else { return nil }
         let note = Note(row: row)
@@ -356,7 +328,6 @@ public final class Store {
         return BodyStamp(updatedTime: row.int("updated_time"), size: row.int("size"))
     }
 
-    /// The note with an empty body, read without it.
     public func noteWithoutBody(id: String) -> Note? {
         let sql = """
             SELECT id, parent_id, title, '' AS body, is_todo, todo_completed, todo_due, source_url, author, markup_language,
@@ -366,13 +337,10 @@ public final class Store {
         return (try? db.query(sql, [id]).first).map(Note.init(row:))
     }
 
-    /// Another connection to the database, for saving off the main thread: with WAL the main connection keeps
-    /// reading meanwhile, and a write of its own waits for the other one (busy timeout).
     public func makeWriter() throws -> SQLiteDB {
         try SQLiteDB(path: directory.appendingPathComponent("database.sqlite").path)
     }
 
-    /// `saveNote` on the given connection.
     public static func saveNote(_ note: Note, in db: SQLiteDB, at now: Int64 = Store.now()) throws {
         let title = note.title.replacingOccurrences(of: "\n", with: " ")
         try db.run("""
@@ -465,13 +433,10 @@ public final class Store {
         }
     }
 
-    /// First non-deleted folder, creating one when the database is empty.
     public func defaultFolderId() throws -> String {
         if let f = folders().first { return f.id }
         return try createFolder(title: "Notes").id
     }
-
-    // MARK: - Tags
 
     public func tags() -> [Tag] {
         let sql = """
@@ -502,7 +467,6 @@ public final class Store {
         ])
     }
 
-    /// Replaces the note's tags with the given titles (case-insensitive, Joplin stores tag titles lowercased).
     public func setTags(noteId: String, titles: [String]) throws {
         let wanted = Array(Set(titles.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }))
         try db.transaction {
@@ -541,8 +505,6 @@ public final class Store {
             try recordDeletion(.tag, id)
         }
     }
-
-    // MARK: - Resources
 
     public func resource(id: String) -> Resource? {
         row(.resource, id: id).map(Resource.init(row:))

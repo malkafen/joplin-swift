@@ -1,12 +1,5 @@
 import AppKit
 
-/// Basic Vim for an `NSTextView`: normal, insert, visual and visual-line modes with counts, motions
-/// (h j k l w b e W B E 0 ^ $ gg G f F t T ; , { } + -), operators (d c y > < with motions, doubled for lines, and in
-/// visual mode), x X D C Y s S r J ~ p P o O i a I A u ⌃R. Yanked and deleted text goes to one unnamed register.
-/// Search is the system find bar (⌘F). Normal mode shows the character under the cursor selected, which reads as a
-/// block cursor.
-///
-/// The text is read in place, around the cursor: copying a note of hundreds of thousands of lines per key is slow.
 @MainActor
 final class VimEngine {
     enum Mode: Equatable {
@@ -39,12 +32,10 @@ final class VimEngine {
     private var anchor = 0
     private var desiredColumn: Int?
     private var lastFind: (key: Character, char: Character)?
-    /// Where each undoable change started, so that "u" puts the cursor there as Vim does.
     private var undoCursors: [Int] = []
     private var redoCursors: [Int] = []
     private var changeStart: Int?
     private var insertStart: Int?
-    /// Counts text changes, to tell whether an insert changed anything (hashing a huge note is slow).
     private var edits = 0
     private var insertEdits = 0
 
@@ -52,7 +43,6 @@ final class VimEngine {
 
     init(textView: NSTextView? = nil) {
         self.textView = textView
-        // Counts changes, to tell whether an insert changed anything.
         textObserver = NotificationCenter.default.addObserver(forName: NSText.didChangeNotification, object: textView,
                                                               queue: .main) { [weak self] _ in
             MainActor.assumeIsolated { self?.textDidChange() }
@@ -62,8 +52,6 @@ final class VimEngine {
     deinit {
         if let textObserver { NotificationCenter.default.removeObserver(textObserver) }
     }
-
-    // MARK: Text helpers
 
     private var text: NSString { textView?.textStorage?.mutableString ?? "" }
     private var length: Int { text.length }
@@ -82,7 +70,6 @@ final class VimEngine {
         return r.location == NSNotFound ? 0 : r.location + 1
     }
 
-    /// Index of the line's newline (or the end of the text).
     private func lineEnd(_ i: Int) -> Int {
         let ns = text
         let from = min(i, ns.length)
@@ -90,7 +77,6 @@ final class VimEngine {
         return r.location == NSNotFound ? ns.length : r.location
     }
 
-    /// Last character a normal-mode cursor may sit on.
     private func lastCursorPosition(_ i: Int) -> Int { max(lineStart(i), lineEnd(i) - 1) }
 
     private func firstNonBlank(_ i: Int) -> Int {
@@ -102,8 +88,6 @@ final class VimEngine {
 
     private func column(_ i: Int) -> Int { i - lineStart(i) }
 
-    /// Start of line `number` (0-based), or of the last line. Reads the text in chunks: per-character access is far
-    /// too slow for notes of hundreds of thousands of lines.
     private func startOfLine(number: Int) -> Int {
         guard number > 0 else { return 0 }
         let ns = text
@@ -121,8 +105,6 @@ final class VimEngine {
         return lineStart(ns.length)
     }
 
-    /// Start of the line `count` lines below (or above) the one at `i`, stopping at the last (first) line;
-    /// nil when already there.
     private func lineStart(_ i: Int, movingBy count: Int, down: Bool) -> Int? {
         var s = lineStart(i)
         var moved = 0
@@ -140,7 +122,6 @@ final class VimEngine {
         return moved > 0 ? s : nil
     }
 
-    /// Shows the cursor: in normal mode the character under it is selected as a block.
     private func place(_ i: Int) {
         guard let tv = textView else { return }
         let p = max(0, min(i, length))
@@ -163,11 +144,9 @@ final class VimEngine {
             visualCursor = p
             return
         }
-        // Off-window, AppKit defers the scroll to a block that leaks if the view goes away before layout.
         if tv.window != nil { tv.scrollRangeToVisible(NSRange(location: p, length: 0)) }
     }
 
-    /// Cursor end of a visual selection (the selection itself always starts at its lower end).
     private var visualCursor = 0
 
     private var position: Int { mode == .visual || mode == .visualLine ? visualCursor : cursor }
@@ -186,8 +165,6 @@ final class VimEngine {
         registerLinewise = linewise
     }
 
-    // MARK: Mode changes
-
     func setMode(_ new: Mode) {
         let p = position
         mode = new
@@ -195,20 +172,17 @@ final class VimEngine {
         if new == .normal { place(min(p, lastCursorPosition(p))) } else { place(p) }
     }
 
-    /// After a mouse click in normal mode the caret becomes a block again.
     func normalizeSelection() {
         guard mode == .normal, let tv = textView, tv.selectedRange().length == 0 else { return }
         place(min(cursor, lastCursorPosition(cursor)))
     }
 
-    /// Puts the cursor at `i`, e.g. on a search match; a visual selection ends.
     func jump(to i: Int) {
         if mode == .visual || mode == .visualLine { mode = .normal }
         desiredColumn = nil
         place(i)
     }
 
-    /// Back to normal mode after loading another note.
     func reset() {
         pending = ""
         countText = ""
@@ -216,14 +190,8 @@ final class VimEngine {
         place(min(cursor, lastCursorPosition(cursor)))
     }
 
-    // MARK: Key handling
-
-    /// Handles a key press; returns false to let the text view process it.
-    /// Whether a layout without Latin letters is active; replaced in tests.
     var nonLatinLayoutActive: () -> Bool = { KeyLayout.isNonLatinLayoutActive }
 
-    /// With a Cyrillic (or other non-Latin) layout active, letters typed as commands mean the key at the same place in
-    /// the Latin layout, as Vim's 'langmap' does: "о" is j, "в" with ⌃ is ⌃D.
     private func latinKeys(_ event: NSEvent, _ chars: String, shift: Bool) -> String {
         guard !chars.unicodeScalars.allSatisfy(\.isASCII), nonLatinLayoutActive(),
               let latin = KeyLayout.latinTyped(keyCode: event.keyCode, shift: shift) else { return chars }
@@ -234,7 +202,7 @@ final class VimEngine {
         let flags = event.modifierFlags.intersection([.command, .control, .option])
         let bare = latinKeys(event, event.charactersIgnoringModifiers?.lowercased() ?? "", shift: false)
         if flags.contains(.command) { return false }
-        if event.keyCode == 53 { return handle(key: "\u{1B}") } // Esc
+        if event.keyCode == 53 { return handle(key: "\u{1B}") }
         if flags == .control, bare == "[" { return handle(key: "\u{1B}") }
         if mode == .insert { return false }
         if flags == .control {
@@ -249,22 +217,19 @@ final class VimEngine {
         case .delete?: return handle(key: "h")
         case .carriageReturn?, .enter?, .newline?: return handle(key: "+")
         case nil: break
-        default: return false // arrows, Tab, Home… keep their usual meaning
+        default: return false
         }
         guard let chars = event.characters, !chars.isEmpty else { return true }
-        // The character after f, t or r is text to find or put, not a command.
         let argument = pending.last.map { "fFtTr".contains($0) } ?? false
         let keys = argument ? chars : latinKeys(event, chars, shift: event.modifierFlags.contains(.shift))
         for c in keys { handle(key: String(c)) }
         return true
     }
 
-    /// Handles one typed character (Esc is "\u{1B}", ⌃R "\u{12}", ⌃D "\u{04}", ⌃U "\u{15}", Return "\r").
     @discardableResult
     func handle(key: String) -> Bool {
         changeStart = nil
         let wasInsert = mode == .insert
-        // Each command is one step of undo, however many edits it makes.
         let undo = textView?.undoManager
         let grouped = !wasInsert && key != "u" && key != "\u{12}" && undo != nil && undo!.groupingLevel == 0
         if grouped { undo!.beginUndoGrouping() }
@@ -289,7 +254,6 @@ final class VimEngine {
             countText = ""
             if mode == .insert {
                 let p = cursor
-                // Typing in insert mode is one change for undo.
                 if let start = insertStart {
                     if edits != insertEdits { undoCursors.append(start) }
                     insertStart = nil
@@ -305,7 +269,6 @@ final class VimEngine {
         }
         if mode == .insert { return false }
 
-        // Prefixes that take the next character literally: f F t T r, also after an operator (dfx).
         if let last = pending.last, "fFtTr".contains(last) {
             let op = pending.count > 1 ? pending.first : nil
             pending = ""
@@ -438,8 +401,6 @@ final class VimEngine {
         return true
     }
 
-    // MARK: Motions
-
     private enum WordClass { case space, word, punct }
 
     private func wordClass(_ i: Int, big: Bool) -> WordClass {
@@ -454,7 +415,6 @@ final class VimEngine {
         let start = wordClass(p, big: big)
         if start != .space { while p < length, wordClass(p, big: big) == start { p += 1 } }
         while p < length, wordClass(p, big: big) == .space {
-            // An empty line is a word of its own.
             if isNewline(p), p + 1 < length, isNewline(p + 1), p > i { return p + 1 }
             p += 1
         }
@@ -493,7 +453,6 @@ final class VimEngine {
         return p
     }
 
-    /// Target of a motion key, whether an operator includes the target character, and whether it is linewise.
     private func target(_ key: Character, from start: Int, count: Int, forOperator: Bool)
         -> (end: Int, inclusive: Bool, linewise: Bool)? {
         var p = start
@@ -505,14 +464,12 @@ final class VimEngine {
         case "j", "k", "+", "-":
             let down = key == "j" || key == "+"
             let col = desiredColumn ?? column(p)
-            // Moving past the first or last line stops there; already there, it is an error.
             guard let s = lineStart(p, movingBy: count, down: down) else { return nil }
             let firstColumn = key == "+" || key == "-"
             desiredColumn = firstColumn ? nil : col
             return (firstColumn ? firstNonBlank(s) : min(s + col, lastCursorPosition(s)), true, true)
         case "w", "W":
             for _ in 0..<count { p = nextWordStart(p, big: key == "W") }
-            // "dw" on the last word of a line stops at the line end.
             if forOperator, lineEnd(start) < p { p = max(lineEnd(start), start) }
             return (p, false, false)
         case "b", "B":
@@ -584,7 +541,6 @@ final class VimEngine {
         let lo = min(start, end)
         var hi = max(start, end)
         if inclusive { hi = min(hi + 1, length) }
-        // "cw" changes to the end of the word, like "ce".
         if op == "c", key == "w" || key == "W", wordClass(start, big: key == "W") != .space {
             var e = start
             for _ in 0..<max(count, 1) { e = wordEnd(e, big: key == "W") }
@@ -593,7 +549,6 @@ final class VimEngine {
         operate(op, NSRange(location: lo, length: hi - lo), linewise: false)
     }
 
-    /// To a line (0-based), or the last one.
     private func jump(toLine line: Int?, operator op: Character?) {
         desiredColumn = nil
         let target = firstNonBlank(line.map { startOfLine(number: max(0, $0)) } ?? lineStart(length))
@@ -606,8 +561,6 @@ final class VimEngine {
             place(target)
         }
     }
-
-    // MARK: Operators
 
     private func operate(_ op: Character, _ range: NSRange, linewise: Bool) {
         textView?.breakUndoCoalescing()
@@ -640,7 +593,6 @@ final class VimEngine {
             indent(range, right: op == ">")
             return
         }
-        // The last line has no newline of its own: take the one before it instead.
         let content = text.substring(with: range)
         if !content.hasSuffix("\n"), range.location > 0, isNewline(range.location - 1) {
             range = NSRange(location: range.location - 1, length: range.length + 1)
@@ -653,7 +605,6 @@ final class VimEngine {
         textView?.breakUndoCoalescing()
         switch op {
         case "c":
-            // Keep the line (and its indentation), change its content.
             let first = original.location
             let lastEnd = lineEnd(max(first, NSMaxRange(original) - 1))
             let indentEnd = firstNonBlank(first)

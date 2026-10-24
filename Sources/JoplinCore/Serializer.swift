@@ -16,15 +16,6 @@ public enum SerializerError: Error, CustomStringConvertible {
     }
 }
 
-/// Joplin's text item format (BaseItem.serialize / BaseItem.unserialize):
-///
-///     <title>
-///
-///     <body, notes only>
-///
-///     key: value
-///     ...
-///     type_: N
 public enum Serializer {
     static let timeFields: Set<String> = ["created_time", "updated_time", "user_created_time", "user_updated_time"]
 
@@ -108,7 +99,6 @@ public enum Serializer {
         return parts.joined(separator: "\n\n")
     }
 
-    /// Parses a serialized item. Unknown properties are dropped, values are converted to SQL types.
     public static func unserialize(_ content: String) throws -> (type: ModelType, fields: [String: Any]) {
         let lines = content.components(separatedBy: "\n")
         var raw: [String: String] = [:]

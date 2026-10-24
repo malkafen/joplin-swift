@@ -11,7 +11,6 @@ func makeStore() throws -> Store {
     try Store(directory: temporaryDirectory())
 }
 
-/// Lowercase 32-char hex id, deterministic from a small number (readable fixtures).
 func fixtureId(_ n: Int) -> String {
     String(format: "%032x", n)
 }

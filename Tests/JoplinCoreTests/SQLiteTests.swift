@@ -93,7 +93,6 @@ import Testing
         let step = #expect(throws: SQLiteError.self) { try db.run("INSERT INTO t VALUES (1)") }
         #expect(step?.description.contains("UNIQUE") == true)
 
-        // Fails while stepping, after a successful prepare.
         #expect(throws: SQLiteError.self) { try db.query("SELECT abs(-9223372036854775807 - 1)") }
     }
 

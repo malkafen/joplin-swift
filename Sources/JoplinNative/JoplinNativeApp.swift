@@ -28,7 +28,6 @@ struct JoplinNativeApp: App {
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    /// Replaced in tests so they never touch the real database.
     lazy var model: AppModel = .shared
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -60,7 +59,6 @@ struct AppCommands: Commands {
         }
 
         CommandGroup(after: .textEditing) {
-            // The Edit menu has no Find item of its own: ⌘F reached only the editor, and only when it was shown.
             Button("Find in Note") { model.findInNote() }
                 .keyboardShortcut("f")
                 .disabled(model.currentNote == nil)
@@ -201,15 +199,12 @@ struct AppCommands: Commands {
     }
 }
 
-/// Debug aid: JN_SNAPSHOT=/path.png renders the main window to a PNG (no screen-recording permission needed).
 @MainActor
 enum Snapshot {
-    /// `JN_IMPORT_DESKTOP` is "1" for the default Joplin Desktop profile, or a profile directory.
     static func scheduleIfRequested(model: AppModel, env: [String: String] = ProcessInfo.processInfo.environment,
                                     quit: @escaping @MainActor () -> Void = { NSApp.terminate(nil) }) {
         StressProbe.start(model: model)
         guard let path = env["JN_SNAPSHOT"] else { return }
-        // Screenshots show a note list, as before the app started with nothing chosen.
         if model.sidebarSelection == nil { model.sidebarSelection = .allNotes }
         let delay = Double(env["JN_SNAPSHOT_DELAY"] ?? "") ?? 3
         if let profile = env["JN_IMPORT_DESKTOP"] {
@@ -275,7 +270,6 @@ enum Snapshot {
         return nil
     }
 
-    /// Scrolls the sidebar's list (the scroll view holding the notebook rows) by `offset` points from its top.
     static func scrollSidebar(in view: NSView, to offset: Double) {
         func find(_ v: NSView) -> FolderMarkerView? {
             if let marker = v as? FolderMarkerView { return marker }
@@ -287,7 +281,6 @@ enum Snapshot {
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 
-    /// Scrolls every text scroll view to `fraction` of its height (0 top, 1 bottom).
     static func scrollAll(in view: NSView, to fraction: Double) {
         if let scroll = view as? NSScrollView, let doc = scroll.documentView, doc is NSTextView {
             let maxY = max(0, doc.frame.height - scroll.contentView.bounds.height)
@@ -297,8 +290,6 @@ enum Snapshot {
         view.subviews.forEach { scrollAll(in: $0, to: fraction) }
     }
 
-    /// The composited window (materials, toolbar), as the user sees it. Capturing the app's own windows needs no
-    /// screen-recording permission. The API is unavailable to Swift on macOS 15+, hence the dynamic lookup.
     static func windowServerImage(_ window: NSWindow) -> NSBitmapImageRep? {
         typealias CreateImage = @convention(c) (CGRect, UInt32, UInt32, UInt32) -> Unmanaged<CGImage>?
         guard let symbol = dlsym(UnsafeMutableRawPointer(bitPattern: -2), "CGWindowListCreateImage") else { return nil }

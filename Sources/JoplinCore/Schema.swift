@@ -1,6 +1,5 @@
 import Foundation
 
-/// Joplin item types (packages/lib/BaseModel.ts, enum ModelType).
 public enum ModelType: Int, CaseIterable, Sendable {
     case note = 1
     case folder = 2
@@ -11,7 +10,6 @@ public enum ModelType: Int, CaseIterable, Sendable {
     case masterKey = 9
     case revision = 13
 
-    /// Types this app stores and exchanges with other Joplin clients.
     public static let syncable: [ModelType] = [.folder, .note, .tag, .noteTag, .resource]
 
     public var table: String? {
@@ -48,8 +46,6 @@ private func t(_ name: String, _ def: String = "") -> FieldDef { FieldDef(name: 
 private func i(_ name: String, _ def: Int = 0) -> FieldDef { FieldDef(name: name, type: .int, defaultValue: String(def)) }
 private func n(_ name: String) -> FieldDef { FieldDef(name: name, type: .numeric, defaultValue: "0") }
 
-/// Column layout mirrors the current Joplin schema (packages/lib/services/database/types.ts)
-/// so that items serialize to exactly the same set of properties.
 public enum Schema {
     public static let version = 2
 
@@ -145,7 +141,6 @@ public enum Schema {
             try db.transaction { try db.exec(createSQL) }
         }
         if current < 2 {
-            // Last synced updated_time of each item; items without a row have never been uploaded.
             try db.transaction {
                 try db.exec("""
                 CREATE TABLE IF NOT EXISTS sync_items (

@@ -5,7 +5,6 @@ import Foundation
 import Testing
 @testable import JoplinNative
 
-/// Draws an image into a bitmap so its drawing handler runs.
 @MainActor
 func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
     let size = NSSize(width: max(1, image.size.width), height: max(1, image.size.height))
@@ -256,7 +255,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
 
     @Test func geometry() throws {
         let placed = Drawio.place(try #require(Drawio.diagram(xml: Self.model)))
-        // Children of the swimlane are placed relative to it.
         #expect(placed.cells["in"]?.rect.origin == CGPoint(x: 220, y: 240))
         let route = Drawio.route(try #require(placed.cells["e1"]), in: placed)
         #expect(route.count == 4)
@@ -289,7 +287,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(mermaid.string.hasPrefix("\u{FFFC}\n"))
         #expect(mermaid.string.contains("classDiagram"))
         #expect(mermaid.string.hasSuffix("\u{FFFC}"))
-        // Cached: the same image object comes back for the same source.
         #expect(MarkdownRenderer.mermaid("graph TD\nA-->B", fontSize: 12) === MarkdownRenderer.mermaid("graph TD\nA-->B", fontSize: 12))
     }
 }
@@ -315,7 +312,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(found.count == 2)
         #expect(found.first { $0.title == "Long" }?.snippet.contains("needle") == true)
         #expect(found.first { $0.title == "needle in title" }?.snippet == "body")
-        // One or two letters match nearly everything: the start of the note instead.
         #expect(store.notes(filter: .search("ne"), sort: .title).first { $0.title == "Long" }?.snippet.hasPrefix("lorem ipsum") == true)
     }
 
@@ -344,7 +340,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(found.hasPrefix("…") && found.hasSuffix("…") && found.contains("The Needle is here"))
         #expect(found.count < 500)
         #expect(snippet("NEEDLE", "Case")?.contains("The Needle") == true)
-        // Not one of the spellings SQLite looks for: found in the text itself, like the index does.
         #expect(snippet("cafe", "Accent")?.contains("café noir") == true)
         #expect(snippet("needle", "Start")?.hasPrefix("needle first") == true)
     }
@@ -356,7 +351,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(model.searchTerms == ["checkbox"])
         #expect(!model.notes.isEmpty)
         #expect(h.findPasteboard.string(forType: .string) == "checkbox")
-
     }
 
     @Test func listFollowsWhenTypingPauses() throws {
@@ -383,7 +377,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(NoteStats(String(repeating: "word ", count: 1_000), terms: []).readingMinutes == 5)
     }
 
-    /// Return / ⌘G step through the matches from the cursor, wrapping around; the preview steps from what is shown.
     @Test func stepperWalksThroughMatches() {
         let stepper = SearchStepper()
         var positions: [SearchPosition] = []
@@ -393,7 +386,7 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         tv.string = "alpha beta\ngamma beta\nbeta"
         tv.stepper = stepper
         stepper.editor = tv
-        #expect(!stepper.step(forward: true, in: tv)) // no search
+        #expect(!stepper.step(forward: true, in: tv))
         let lm = tv.layoutManager as! SearchMarkingLayoutManager
         lm.searchTerms = ["beta"]
         tv.setSelectedRange(NSRange(location: 8, length: 0))
@@ -402,11 +395,10 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(lm.currentMatch == NSRange(location: 17, length: 4))
         stepper.step(forward: true, in: tv)
         stepper.step(forward: true, in: tv)
-        #expect(tv.selectedRange().location == 6) // wrapped
+        #expect(tv.selectedRange().location == 6)
         stepper.step(forward: false, in: tv)
         #expect(tv.selectedRange().location == 22)
         #expect(positions.map(\.index) == [1, 2, 0, 2] && positions.allSatisfy { $0.count == 3 })
-        // Typing forgets the match stepped to.
         tv.insertText("x", replacementRange: NSRange(location: 0, length: 0))
         #expect(lm.currentMatch == nil)
         lm.searchTerms = ["zzz"]
@@ -429,7 +421,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(model.searchPosition == nil)
     }
 
-    /// ⌘F finds in the open note, from wherever the focus is; ⌘L stays the search over all notes.
     @Test func commandFFindsInTheOpenNote() throws {
         _ = NSApplication.shared
         let h = try ModelHarness()
@@ -437,24 +428,21 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 600, height: 400), styleMask: [.titled], backing: .buffered, defer: false)
         window.isReleasedWhenClosed = false
         let editor = MarkdownTextView(usingTextLayoutManager: false), preview = PreviewTextView(usingTextLayoutManager: false)
-        let list = NSTextView()  // stands for the note list: something else with the focus
+        let list = NSTextView()
         for (view, x) in [(editor as NSView, 0.0), (preview, 200.0), (list, 400.0)] {
             let scroll = NSScrollView(frame: NSRect(x: x, y: 0, width: 200, height: 400))
             scroll.documentView = view
             view.frame = scroll.bounds
             window.contentView?.addSubview(scroll)
         }
-        // As MarkdownEditor and MarkdownPreview set them up (checked in their own tests).
         editor.usesFindBar = true
         preview.usesFindBar = true
         model.searchStepper.editor = editor
         model.searchStepper.preview = preview
-        // Without a note there is nothing to find in.
         model.selectedNoteIDs = []
         window.makeFirstResponder(list)
         model.findInNote(in: window)
         #expect(window.firstResponder === list)
-        /// The find bar of `tv` is shown and has the focus.
         func findsIn(_ tv: NSTextView) -> Bool {
             guard let scroll = tv.enclosingScrollView, scroll.isFindBarVisible,
                   let focus = window.firstResponder as? NSView else { return false }
@@ -466,7 +454,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         model.layout = .editor
         model.findInNote(in: window)
         #expect(findsIn(editor))
-        // Preview only, or the preview has the focus: the preview's find bar.
         model.layout = .preview
         window.makeFirstResponder(list)
         model.findInNote(in: window)
@@ -480,7 +467,6 @@ func rasterize(_ image: NSImage) -> NSBitmapImageRep? {
         #expect(findsIn(editor))
     }
 
-    /// Search words are drawn where the text is shown; the text itself is left alone.
     @Test func layoutManagerMarksMatchesWithoutTouchingTheText() {
         let storage = NSTextStorage(string: String(repeating: "one two three\n", count: 2_000))
         let lm = SearchMarkingLayoutManager()

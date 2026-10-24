@@ -19,7 +19,6 @@ import Testing
         try await engine(store).sync()
     }
 
-    /// Writes a field directly and bumps updated_time, as an edit made at a later moment.
     func edit(_ store: Store, _ type: ModelType, _ id: String, _ column: String, _ value: Any, at time: Int64? = nil) throws {
         let t = time ?? (store.row(type, id: id)!.int("updated_time") + 1000)
         try store.db.run("UPDATE \(type.table!) SET \"\(column)\" = ?, updated_time = ? WHERE id = ?", [value, t, id])
@@ -64,7 +63,6 @@ import Testing
         for (i, id) in ids.enumerated() { #expect(b.note(id: id)?.body == "body \(i)") }
         #expect(try await sync(b) == SyncReport())
 
-        // A file listed in the delta but gone by the time it is fetched is skipped.
         let names = [ids[0], ids[1], String(repeating: "f", count: 32)].map { "\($0).md" }
         let contents = try await engine(b).fetch(names)
         #expect(contents.count == 3)
@@ -91,7 +89,6 @@ import Testing
         #expect(try Data(contentsOf: b.url(for: local)) == Data([1, 2, 3]))
         #expect(!b.isDirty(id: note.id))
 
-        // Edits travel back, including moving to the trash.
         var edited = try #require(b.note(id: note.id))
         edited.body = "Changed on B"
         try b.saveNote(edited)
@@ -153,7 +150,6 @@ import Testing
         #expect(copy.string("title") == "Shared (conflict)")
         #expect(b.tags(forNote: copy.string("id")).map(\.title) == ["keep"])
 
-        // The copy is a normal note that reaches the other client.
         try await sync(b)
         try await sync(a)
         #expect(a.note(id: copy.string("id"))?.body == "from B")
@@ -183,7 +179,6 @@ import Testing
         try await sync(a)
         #expect(try await sync(b).conflicts == 0)
 
-        // Same updated_time on both sides: already in sync.
         let t = Store.now() + 10_000
         try edit(a, .note, note.id, "title", "T", at: t)
         try edit(b, .note, note.id, "title", "T", at: t)
@@ -208,7 +203,6 @@ import Testing
         try await sync(a)
         #expect(a.folder(id: folder.id)?.title == "From B newer")
 
-        // An older local change loses.
         try edit(a, .folder, folder.id, "title", "A again", at: a.row(.folder, id: folder.id)!.int("updated_time") + 10_000)
         try edit(b, .folder, folder.id, "title", "B older", at: b.row(.folder, id: folder.id)!.int("updated_time") + 1)
         try await sync(a)
@@ -330,7 +324,6 @@ import Testing
         server.failures["PUT /api/items/root:/info.json"] = 500
         await #expect(throws: SyncError.http(status: 500, code: "", message: "Injected failure")) { try await sync(store) }
 
-        // A failure after locking still releases the lock.
         server.seed("info.json", #"{"version":3}"#)
         try store.createFolder(title: "F")
         server.failures["PUT /api/items/root:/"] = 502

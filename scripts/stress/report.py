@@ -57,7 +57,6 @@ print("|:--|" + "--:|" * len(apps))
 for title, step, note, key, unit in ROWS:
     print(f"| {title} | " + " | ".join(fmt(value(runs, step, note, key), unit) for _, runs in apps) + " |")
 
-# CPU and memory, per phase: from the end of the previous step (or the launch) to the end of the last step named.
 def at(run, step, note=None):
     if step == "start": return next((s.get("start") for s in run["steps"] if s["step"] == "launch"), None)
     return next((s.get("at") for s in run["steps"] if s["step"] == step and s.get("note") == note), None)

@@ -5,7 +5,6 @@ import SwiftUI
 import Testing
 @testable import JoplinNative
 
-/// App-level glue: delegate callbacks, menu commands, debug snapshot hook, file-based model actions.
 @MainActor
 @Suite(.serialized) struct AppShellTests {
     @Test func delegateFlushesAndOpensJEXFiles() throws {
@@ -86,7 +85,7 @@ import Testing
         try Data("a".utf8).write(to: file)
 
         model.selectedNoteIDs = []
-        model.attach([file]) // no note selected
+        model.attach([file])
         #expect(try h.store.rows(.resource).isEmpty)
 
         model.selectedNoteIDs = [note.id]
@@ -130,7 +129,6 @@ import Testing
     }
 }
 
-/// Minimal NSDraggingInfo so the editor's drop handling can be exercised without a real drag session.
 private final class FakeDrag: NSObject, NSDraggingInfo {
     let draggingPasteboard: NSPasteboard
     init(_ pasteboard: NSPasteboard) { draggingPasteboard = pasteboard }
@@ -169,7 +167,6 @@ private final class FakeDrag: NSObject, NSDraggingInfo {
         #expect(tv.performDragOperation(FakeDrag(pb)))
         #expect(tv.string.contains("[drop.txt](:/x)"))
 
-        // Plain text drags fall through to NSTextView.
         pb.clearContents()
         pb.setString("x", forType: .string)
         _ = tv.performDragOperation(FakeDrag(pb))

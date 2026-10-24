@@ -1,8 +1,5 @@
 import AppKit
 
-/// Finds `$…$` and `$$…$$` before Markdown parsing, so that `_`, `*` and `\` inside formulas are not taken as
-/// Markdown. Each formula becomes a private-use placeholder; line numbers stay unchanged (checkbox toggling
-/// relies on them).
 enum MathExtractor {
     static let open: Character = "\u{E000}"
     static let close: Character = "\u{E001}"
@@ -26,8 +23,6 @@ enum MathExtractor {
             return "\(open)\(formulas.count - 1)\(close)"
         }
         scan(original, display: { i, end in
-            // Display block: "$$" lines around the formula. The formula moves to the first line and the
-            // others become empty, which also separates it from surrounding paragraphs.
             let tex = original[(i + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
             let indent = String(original[i].prefix { $0 == " " || $0 == "\t" })
             lines[i] = indent + token(tex, display: true)
@@ -38,14 +33,10 @@ enum MathExtractor {
         return (lines.joined(separator: "\n"), formulas)
     }
 
-    /// The code fence the extraction is inside of after `text`, which starts inside `fence`. The extraction tracks
-    /// fences on its own, a little differently from Markdown.
     static func openFence(after text: String, from fence: String? = nil) -> String? {
         scan(text.utf8.split(separator: 10, omittingEmptySubsequences: false).map { Substring($0) }, from: fence)
     }
 
-    /// Walks the lines as the extraction does: `display` gets the first and last line of each `$$` block, `inline`
-    /// each line outside of code fences and blocks. Returns the fence open at the end.
     @discardableResult
     private static func scan<Line: StringProtocol>(_ lines: [Line], from fence: String? = nil, display: (Int, Int) -> Void = { _, _ in },
                                                    inline: (Int) -> Void = { _ in }) -> String? {
@@ -74,7 +65,6 @@ enum MathExtractor {
         return fence
     }
 
-    /// Replaces inline formulas outside of code spans.
     private static func replaceInline(_ line: String, token: (String, Bool) -> String) -> String {
         guard line.contains("$") else { return line }
         var out = ""
@@ -108,8 +98,6 @@ enum MathExtractor {
     }
 }
 
-/// Typesets a useful subset of LaTeX math with Unicode symbols and the system's STIX Two Math font: Greek
-/// letters, operators, arrows, fractions, roots, sub- and superscripts, `\mathbb`, `\text` and friends.
 struct MathRenderer {
     var size: CGFloat
     var color: NSColor = .labelColor
@@ -127,8 +115,6 @@ struct MathRenderer {
         emit(parser.parseGroup(until: nil), into: out, scale: 1, baseline: 0)
         return out
     }
-
-    // MARK: Model
 
     indirect enum Node {
         case text(String, italic: Bool)
@@ -170,7 +156,6 @@ struct MathRenderer {
             return nodes
         }
 
-        /// One atom; `argument` atoms of commands and scripts take a single digit, as in `\frac12` or `x^23`.
         mutating func parseAtom(argument: Bool = false) -> Node? {
             while i < chars.count, chars[i] == " " || chars[i] == "\n" { i += 1 }
             guard i < chars.count else { return nil }
@@ -296,8 +281,6 @@ struct MathRenderer {
         }
     }
 
-    // MARK: Output
-
     private func font(_ base: NSFont, scale: CGFloat) -> NSFont {
         NSFont(descriptor: base.fontDescriptor, size: base.pointSize * scale) ?? base
     }
@@ -318,7 +301,6 @@ struct MathRenderer {
         case .text(let s, let italic):
             append(s, italic && !upright ? italicFont : uprightFont, scale: scale, baseline: baseline, into: out)
         case .symbol(let s):
-            // Space around relations and binary operators, as TeX does; none for a leading sign.
             let last = out.string.last
             let leading = last == nil || last == "(" || last == "[" || last == "{" || last == "⁄"
                 || last.map { Self.relations.contains(String($0)) || Self.binary.contains(String($0)) || $0 == "\u{2004}" || $0 == "\u{2005}" } == true
@@ -361,7 +343,6 @@ struct MathRenderer {
         }
     }
 
-    /// Fraction parts and radicands: single atoms stay bare, anything longer gets parentheses.
     private func emitWrapped(_ node: Node, into out: NSMutableAttributedString, scale: CGFloat, baseline: CGFloat,
                              upright: Bool) {
         var simple = true
@@ -374,8 +355,6 @@ struct MathRenderer {
             append(")", mathFont, scale: scale, baseline: baseline, into: out)
         }
     }
-
-    // MARK: Tables
 
     static let functions: Set<String> = [
         "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "log", "ln",
@@ -420,7 +399,6 @@ struct MathRenderer {
     enum Alphabet {
         case bold, doubleStruck, script
 
-        /// First capital letter of the alphabet in the Mathematical Alphanumeric Symbols block.
         var base: UInt32 {
             switch self {
             case .bold: return 0x1D400
@@ -429,7 +407,6 @@ struct MathRenderer {
             }
         }
 
-        /// Letters that live in the Letterlike Symbols block instead (their slots above are empty).
         var exceptions: [Character: Character] {
             switch self {
             case .bold: return [:]

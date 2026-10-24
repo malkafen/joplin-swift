@@ -1,10 +1,6 @@
 import AppKit
 import Compression
 
-/// Native renderer for draw.io (diagrams.net) diagrams. It reads the `mxfile` XML that draw.io embeds in its SVG
-/// exports (the Joplin draw.io plugin stores diagrams as `![drawio](:/id)` SVG or PNG resources) and in `.drawio`
-/// files, and draws the shapes, edges and labels with Core Graphics. This avoids `foreignObject` text, which the
-/// system SVG renderer does not draw.
 enum Drawio {
     struct Cell {
         var id: String
@@ -28,9 +24,6 @@ enum Drawio {
         var background: NSColor?
     }
 
-    // MARK: Loading
-
-    /// The diagram in an SVG exported by draw.io, from its `content` attribute.
     static func diagram(svg data: Data) -> Diagram? {
         guard let doc = try? XMLDocument(data: data, options: []),
               let content = doc.rootElement()?.attribute(forName: "content")?.stringValue,
@@ -38,7 +31,6 @@ enum Drawio {
         return diagram(xml: content)
     }
 
-    /// The first page of an `mxfile` (plain or compressed) or a bare `mxGraphModel`.
     static func diagram(xml: String) -> Diagram? {
         guard let doc = try? XMLDocument(xmlString: xml, options: []), let root = doc.rootElement() else { return nil }
         var model: XMLElement?
@@ -56,7 +48,6 @@ enum Drawio {
         guard let model, let rootCell = model.elements(forName: "root").first else { return nil }
         var cells: [Cell] = []
         for element in rootCell.children?.compactMap({ $0 as? XMLElement }) ?? [] {
-            // UserObject / object wrap an mxCell and carry the label.
             var cellElement = element
             var label = element.attribute(forName: "value")?.stringValue ?? ""
             var id = element.attribute(forName: "id")?.stringValue ?? ""
@@ -98,7 +89,6 @@ enum Drawio {
         return cells.contains { $0.isVertex || $0.isEdge } ? Diagram(cells: cells, background: background) : nil
     }
 
-    /// draw.io compression: base64, raw deflate, then URI encoding.
     static func decompress(_ text: String) -> String? {
         guard let data = Data(base64Encoded: text, options: .ignoreUnknownCharacters), !data.isEmpty else { return nil }
         var capacity = max(data.count * 8, 4096)
@@ -147,15 +137,12 @@ enum Drawio {
         return Mermaid.color(value)
     }
 
-    // MARK: Geometry
-
     struct Placed {
         var cells: [String: Cell]
         var order: [String]
         var bounds: CGRect
     }
 
-    /// Absolute rectangles (children of groups are relative to their parent) and the drawing bounds.
     static func place(_ d: Diagram) -> Placed {
         var byId: [String: Cell] = [:]
         for c in d.cells { byId[c.id] = c }
@@ -195,7 +182,6 @@ enum Drawio {
         let orthogonal = edge.style["edgeStyle"]?.lowercased().contains("orthogonal") == true
             || edge.style["edgeStyle"] == "elbowEdgeStyle"
         if orthogonal, middle.isEmpty, let s = source, let t = target {
-            // Simple elbow: leave and enter on the facing sides.
             let dx = t.midX - s.midX, dy = t.midY - s.midY
             if abs(dx) >= abs(dy) {
                 let midX = (dx > 0 ? (s.maxX + t.minX) : (s.minX + t.maxX)) / 2
@@ -213,7 +199,6 @@ enum Drawio {
         return [start] + middle + [end]
     }
 
-    /// Point on the border of `r` on the way to `p`.
     static func clip(_ r: CGRect, toward p: CGPoint, straight: Bool = false) -> CGPoint {
         let c = CGPoint(x: r.midX, y: r.midY)
         if straight {
@@ -227,8 +212,6 @@ enum Drawio {
         let t = min(tx, ty)
         return CGPoint(x: c.x + dx * t, y: c.y + dy * t)
     }
-
-    // MARK: Drawing
 
     static func image(_ d: Diagram) -> NSImage? {
         let placed = place(d)
@@ -343,7 +326,6 @@ enum Drawio {
     }
 
     static func draw(_ placed: Placed) {
-        // Vertices first in document order (containers before their children), then edges, then edge labels.
         for id in placed.order {
             guard let c = placed.cells[id], c.isVertex, !c.relative else { continue }
             drawVertex(c)

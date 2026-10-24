@@ -13,10 +13,8 @@ func fixtureId(_ n: Int) -> String {
     String(format: "%032x", n)
 }
 
-/// Smallest valid PNG (1×1, transparent) so image code paths get a real bitmap.
 let tinyPNG = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==")!
 
-/// An AppModel on a throw-away store, defaults domain and pasteboard; opened URLs are recorded instead of launched.
 @MainActor
 final class ModelHarness {
     let store: Store

@@ -69,7 +69,6 @@ import Testing
         #expect(row.string("title") == "second")
         #expect(row.string("author") == "me")
 
-        // Only an id: nothing to update, an existing row must stay as is.
         try store.upsert(.noteTag, ["id": fixtureId(2), "note_id": id])
         try store.upsert(.noteTag, ["id": fixtureId(2)])
         #expect(try store.rows(.noteTag, where: "note_id = ?", [id]).count == 1)
@@ -83,8 +82,6 @@ import Testing
         #expect(store.setting("k") == "2")
     }
 
-    // MARK: Folders
-
     @Test func folderTree() throws {
         let store = try makeStore()
         let a = try store.createFolder(title: "b-parent")
@@ -96,7 +93,7 @@ import Testing
         try store.renameFolder(id: c.id, title: "renamed")
         #expect(store.folder(id: c.id)?.title == "renamed")
 
-        try store.moveFolder(id: a.id, toParent: c.id) // would create a cycle
+        try store.moveFolder(id: a.id, toParent: c.id)
         try store.moveFolder(id: a.id, toParent: a.id)
         #expect(store.folder(id: a.id)?.parentId == "")
         try store.moveFolder(id: c.id, toParent: "")
@@ -126,7 +123,6 @@ import Testing
         #expect(Set(store.folders(deleted: true).map(\.id)) == [root.id, child.id])
         #expect(store.notes(filter: .trash, sort: .updated).map(\.id) == [note.id])
 
-        // Restoring the child brings its trashed parent back too.
         try store.restoreFolder(id: child.id)
         #expect(Set(store.folders().map(\.id)) == [root.id, child.id])
         #expect(store.note(id: note.id)?.deletedTime == 0)
@@ -168,8 +164,6 @@ import Testing
         #expect(store.folder(id: id)?.title == "Notes")
         #expect(try store.defaultFolderId() == id)
     }
-
-    // MARK: Notes
 
     @Test func filtersAndSorting() throws {
         let store = try makeStore()
@@ -246,7 +240,6 @@ import Testing
 
         try store.deleteNotesPermanently(ids: [])
         try store.trashFolder(id: empty.id)
-        // The trashed parent still has a live child folder, so it must survive emptying the trash.
         try store.db.run("UPDATE folders SET deleted_time = 1 WHERE id = ?", [parent.id])
         try store.trashNotes(ids: [note.id])
         try store.emptyTrash()
@@ -260,8 +253,6 @@ import Testing
         try store.deleteNotesPermanently(ids: [other.id])
         #expect(store.note(id: other.id) == nil)
     }
-
-    // MARK: Tags
 
     @Test func tags() throws {
         let store = try makeStore()
@@ -293,8 +284,6 @@ import Testing
         #expect(!store.tags().contains { $0.title == "secret" })
         #expect(store.notes(filter: .tag(home.id), sort: .updated).isEmpty)
     }
-
-    // MARK: Resources
 
     @Test func resources() throws {
         let store = try makeStore()

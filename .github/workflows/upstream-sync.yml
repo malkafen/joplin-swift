@@ -1,6 +1,5 @@
 name: Upstream sync
 
-# Watches laurent22/joplin desktop releases and opens one tracking issue per release that is not mirrored yet.
 on:
   schedule:
     - cron: "17 6 * * *"

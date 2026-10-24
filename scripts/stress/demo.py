@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-"""Small, realistic library for the README screenshots, written as JSON lines for load.py."""
 import json, sys
 F = ["Work", "Work/Projects", "Personal", "Personal/Travel", "Recipes", "Reading"]
 N = [

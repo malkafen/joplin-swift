@@ -1,8 +1,5 @@
 import AppKit
 
-/// Native renderer for the Mermaid diagrams that notes use most: flowcharts (`graph` / `flowchart`), state
-/// diagrams, sequence diagrams and pie charts. Diagrams are laid out and drawn with Core Graphics in system colours,
-/// so they follow the appearance and need no JavaScript. Other diagram types return nil and stay code.
 enum Mermaid {
     static func image(_ source: String, fontSize: CGFloat = 13) -> NSImage? {
         let lines = source.components(separatedBy: .newlines)
@@ -30,7 +27,6 @@ enum Mermaid {
         return nil
     }
 
-    /// Mermaid label text: quotes, `<br>`, Markdown emphasis and entity codes removed.
     static func cleanLabel(_ raw: String) -> String {
         var s = raw.trimmingCharacters(in: .whitespaces)
         if s.count >= 2, s.hasPrefix("\""), s.hasSuffix("\"") { s = String(s.dropFirst().dropLast()) }
@@ -57,8 +53,6 @@ enum Mermaid {
     }
 }
 
-// MARK: - Drawing helpers
-
 enum DiagramStyle {
     static var nodeFill: NSColor { NSColor.controlAccentColor.withAlphaComponent(0.12) }
     static var nodeStroke: NSColor { NSColor.controlAccentColor.withAlphaComponent(0.75) }
@@ -78,7 +72,6 @@ enum DiagramStyle {
         return CGSize(width: ceil(r.width), height: ceil(r.height))
     }
 
-    /// Draws `text` centred in `rect` (flipped coordinates).
     static func draw(_ text: String, in rect: CGRect, font: NSFont, color: NSColor = text,
                      align: NSTextAlignment = .center) {
         guard !text.isEmpty else { return }
@@ -108,7 +101,6 @@ enum DiagramStyle {
         p.stroke()
     }
 
-    /// Label on a line: text on a small rounded plate so it stays readable over the stroke.
     static func plate(_ text: String, at center: CGPoint, font: NSFont) {
         guard !text.isEmpty else { return }
         let size = measure(text, font: font, maxWidth: 180)
@@ -119,7 +111,6 @@ enum DiagramStyle {
         draw(text, in: r, font: font, color: .secondaryLabelColor)
     }
 
-    /// A lazily drawn, appearance-aware image of `size` (top-left origin).
     static func image(size: CGSize, draw: @escaping (CGRect) -> Void) -> NSImage {
         let image = NSImage(size: size, flipped: true) { rect in
             draw(rect)
@@ -129,8 +120,6 @@ enum DiagramStyle {
         return image
     }
 }
-
-// MARK: - Flowchart model
 
 struct Flowchart {
     enum Direction: String { case TB, BT, LR, RL }
@@ -186,8 +175,6 @@ struct Flowchart {
         if let fill { nodes[i].fill = fill }
         if let stroke { nodes[i].stroke = stroke }
     }
-
-    // MARK: Flowchart parsing
 
     static func parse(header: String, lines: [String]) -> Flowchart {
         var chart = Flowchart()
@@ -273,7 +260,6 @@ struct Flowchart {
     private static let edgePlain = try! NSRegularExpression(pattern: #"^\s*([<xo]?)(-{2,}|={2,}|-\.+-|~{3,})([>xo]?)"#)
     private static let pipeText = try! NSRegularExpression(pattern: #"^\s*\|([^|]*)\|"#)
 
-    /// Parses `A[x] & B --> |t| C --- D`; returns the node ids it mentions.
     mutating func parseStatement(_ line: String) -> [String] {
         let chars = Array(line)
         var i = 0
@@ -285,7 +271,6 @@ struct Flowchart {
             skipSpaces()
             var id = ""
             while i < chars.count, chars[i].isLetter || chars[i].isNumber || "_-.$".contains(chars[i]) {
-                // Stop before an edge that follows the id without spaces ("A-->B").
                 if chars[i] == "-" || chars[i] == "." || chars[i] == "=" {
                     let rest = String(chars[i...])
                     if rest.hasPrefix("--") || rest.hasPrefix("-.") || rest.hasPrefix("==") || rest.hasPrefix(".-") { break }
@@ -305,7 +290,6 @@ struct Flowchart {
                 }
             }
             if !nodes.contains(where: { $0.id == id }) { node(id) }
-            // A:::className is accepted and ignored.
             if String(chars[i...]).hasPrefix(":::") {
                 i += 3
                 while i < chars.count, chars[i] != " " { i += 1 }
@@ -366,8 +350,6 @@ struct Flowchart {
         }
         return mentioned
     }
-
-    // MARK: State diagrams
 
     static func parseState(lines: [String]) -> Flowchart {
         var chart = Flowchart()
@@ -451,8 +433,6 @@ struct Flowchart {
     }
 }
 
-// MARK: - Layered layout
-
 struct FlowLayout {
     let chart: Flowchart
     let font: NSFont
@@ -491,7 +471,6 @@ struct FlowLayout {
         let pos = Dictionary(uniqueKeysWithValues: ids.enumerated().map { ($1, $0) })
         let edges = chart.edges.filter { pos[$0.from] != nil && pos[$0.to] != nil }
 
-        // Break cycles: edges that close a cycle in DFS order point backwards.
         var state = [Int](repeating: 0, count: ids.count)
         var outgoing = [[Int]](repeating: [], count: ids.count)
         for (k, e) in edges.enumerated() { outgoing[pos[e.from]!].append(k) }
@@ -507,7 +486,6 @@ struct FlowLayout {
         for v in ids.indices where state[v] == 0 { dfs(v) }
         backEdges = back
 
-        // Longest-path ranks.
         var rank = [Int](repeating: 0, count: ids.count)
         var changed = true
         var guardCount = 0
@@ -526,7 +504,6 @@ struct FlowLayout {
         var layers = [[Int]](repeating: [], count: maxRank + 1)
         for v in ids.indices { layers[rank[v]].append(v) }
 
-        // Barycentre ordering sweeps.
         var preds = [[Int]](repeating: [], count: ids.count)
         var succs = [[Int]](repeating: [], count: ids.count)
         for (k, e) in edges.enumerated() {
@@ -554,7 +531,6 @@ struct FlowLayout {
             }
         }
 
-        // Coordinates in a top-to-bottom frame; LR swaps axes at the end.
         let sizes = chart.nodes.map { n -> CGSize in
             let s = nodeSize(n)
             return horizontal ? CGSize(width: s.height, height: s.width) : s
@@ -568,7 +544,6 @@ struct FlowLayout {
             for v in layer { y[v] = top + height / 2 }
             top += height + gapY
         }
-        // Place each layer under the average of its predecessors, then remove overlaps.
         for (r, layer) in layers.enumerated() {
             var desired: [(Int, CGFloat)] = []
             var cursor: CGFloat = 0
@@ -584,7 +559,6 @@ struct FlowLayout {
                 x[v] = left + sizes[v].width / 2
                 right = left + sizes[v].width + gapX
             }
-            // Shift the layer back left by half of the push so it stays centred under its parents.
             if let first = desired.first, let last = desired.last {
                 let wantCenter = (first.1 + last.1) / 2
                 let haveCenter = (x[first.0] + x[last.0]) / 2
@@ -603,7 +577,6 @@ struct FlowLayout {
             maxX = max(maxX, rect.maxX)
             maxY = max(maxY, rect.maxY)
         }
-        // Mirror for bottom-to-top and right-to-left.
         if chart.direction == .BT || chart.direction == .RL {
             for (id, r) in frames {
                 frames[id] = chart.direction == .BT
@@ -611,13 +584,10 @@ struct FlowLayout {
                     : CGRect(x: maxX + margin - r.maxX, y: r.minY, width: r.width, height: r.height)
             }
         }
-        // Room for group titles: groups are drawn around their members with a title strip.
         size = CGSize(width: maxX + margin, height: maxY + margin)
-        // Room for loops and back edges, which bow out beyond the nodes.
         for (k, e) in edges.enumerated() where back.contains(k) || e.from == e.to {
             guard let a = frames[e.from], let b = frames[e.to] else { continue }
             let c = curve(e, from: a, to: b, back: true)
-            // The curve stays within 3/4 of the way to its control points.
             let far = [c.control1, c.control2].map { p -> CGPoint in
                 CGPoint(x: c.start.x + (p.x - c.start.x) * 0.75, y: c.start.y + (p.y - c.start.y) * 0.75)
             }
@@ -641,7 +611,6 @@ struct FlowLayout {
         return r.insetBy(dx: -12, dy: -12).offsetBy(dx: 0, dy: -8).insetBy(dx: 0, dy: -4)
     }
 
-    /// Point where the segment from the node centre towards `toward` leaves the node.
     func boundaryPoint(_ id: String, toward p: CGPoint) -> CGPoint {
         guard let r = frames[id], let n = chart.node(id: id) else { return p }
         let c = CGPoint(x: r.midX, y: r.midY)
@@ -692,17 +661,14 @@ struct FlowLayout {
         }
     }
 
-    /// Start, control points and end of the cubic curve drawn for an edge.
     func curve(_ e: Flowchart.Edge, from a: CGRect, to b: CGRect, back: Bool)
         -> (start: CGPoint, control1: CGPoint, control2: CGPoint, end: CGPoint) {
         let ca = CGPoint(x: a.midX, y: a.midY), cb = CGPoint(x: b.midX, y: b.midY)
         if e.from == e.to {
-            // Loop on the trailing side of the node.
             return (CGPoint(x: a.maxX, y: a.midY - 6), CGPoint(x: a.maxX + 34, y: a.midY - 26),
                     CGPoint(x: a.maxX + 34, y: a.midY + 26), CGPoint(x: a.maxX, y: a.midY + 6))
         }
         if back {
-            // Back edges bow out to the side so they do not run through the nodes in between.
             let side: CGFloat = horizontal ? 0 : max(a.width, b.width) / 2 + 30
             let lift: CGFloat = horizontal ? max(a.height, b.height) / 2 + 30 : 0
             let start = boundaryPoint(e.from, toward: CGPoint(x: ca.x + side, y: ca.y + lift))
@@ -711,7 +677,6 @@ struct FlowLayout {
         }
         let start = boundaryPoint(e.from, toward: cb)
         let end = boundaryPoint(e.to, toward: ca)
-        // Gentle S-curve along the flow direction.
         if horizontal {
             let mid = (start.x + end.x) / 2
             return (start, CGPoint(x: mid, y: start.y), CGPoint(x: mid, y: end.y), end)
@@ -733,7 +698,6 @@ struct FlowLayout {
         if e.arrowEnd { DiagramStyle.arrowHead(at: end, from: control2) }
         if e.arrowStart { DiagramStyle.arrowHead(at: start, from: control1) }
         if !e.label.isEmpty {
-            // Midpoint of the cubic curve.
             let m = CGPoint(x: (start.x + 3 * control1.x + 3 * control2.x + end.x) / 8,
                             y: (start.y + 3 * control1.y + 3 * control2.y + end.y) / 8)
             DiagramStyle.plate(e.label, at: m, font: font)
@@ -840,8 +804,6 @@ struct FlowLayout {
         DiagramStyle.draw(n.label, in: r.insetBy(dx: 10, dy: 0), font: font)
     }
 }
-
-// MARK: - Sequence diagrams
 
 struct SequenceDiagram {
     struct Participant {
@@ -959,7 +921,6 @@ struct SequenceLayout {
         for p in diagram.participants {
             boxWidth[p.id] = max(80, DiagramStyle.measure(p.label, font: font, maxWidth: 160).width + 24)
         }
-        // Column gaps grow to fit the longest message between neighbours.
         var gaps = [CGFloat](repeating: 60, count: max(diagram.participants.count, 1))
         let index = Dictionary(uniqueKeysWithValues: diagram.participants.enumerated().map { ($1.id, $0) })
         for item in diagram.items {
@@ -1011,7 +972,6 @@ struct SequenceLayout {
     func draw() {
         let small = NSFont.systemFont(ofSize: font.pointSize * 0.9)
         let bottom = size.height - 10
-        // Lifelines and headers.
         for p in diagram.participants {
             guard let x = columns[p.id], let w = boxWidth[p.id] else { continue }
             let line = NSBezierPath()
@@ -1032,7 +992,6 @@ struct SequenceLayout {
             DiagramStyle.draw(p.label, in: box.insetBy(dx: 8, dy: 0),
                               font: NSFont.systemFont(ofSize: font.pointSize, weight: .medium))
         }
-        // Blocks are drawn as frames from their start row to their end row.
         var stack: [(kind: String, text: String, y: CGFloat)] = []
         let left = (columns.values.min() ?? 0) - 60
         let right = (columns.values.max() ?? 0) + 60
@@ -1139,8 +1098,6 @@ struct SequenceLayout {
         }
     }
 }
-
-// MARK: - Pie charts
 
 struct Pie {
     var title = ""

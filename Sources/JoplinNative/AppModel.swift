@@ -65,16 +65,13 @@ struct Confirmation: Identifiable {
 @MainActor
 @Observable
 final class AppModel {
-    /// `JN_DATA_DIR` points the app at another data directory (screenshots, experiments).
     static let shared = ProcessInfo.processInfo.environment["JN_DATA_DIR"]
         .map { AppModel.makeDefault(in: URL(fileURLWithPath: $0, isDirectory: true)) } ?? AppModel.makeDefault()
 
     let store: Store
     @ObservationIgnored let editor = EditorBridge()
     @ObservationIgnored let searchStepper = SearchStepper()
-    /// The match of the search last stepped to in the shown note.
     var searchPosition: SearchPosition?
-    /// Pinned parent notebooks while the sidebar scrolls.
     @ObservationIgnored let sticky = StickyFolders()
 
     private(set) var folders: [Folder] = []
@@ -86,8 +83,6 @@ final class AppModel {
     private(set) var allNotesCount = 0
     private(set) var trashCount = 0
     private(set) var notes: [NoteSummary] = []
-    /// Observed by hand: the generated setter compares old and new values, and comparing the body of a huge note on
-    /// every keystroke is slow.
     @ObservationIgnored private var storedNote: Note?
     private(set) var currentNote: Note? {
         get {
@@ -120,8 +115,6 @@ final class AppModel {
         didSet {
             guard oldValue != searchText else { return }
             searchPosition = nil
-            // The words are highlighted in the note at once; the list (a full-text query over all notes, and maybe
-            // another note to load) follows once typing pauses.
             pendingSearch?.cancel()
             guard searchDelay > 0, !searchText.isEmpty else { return searchNow() }
             let item = DispatchWorkItem { [weak self] in self?.searchNow() }
@@ -132,14 +125,11 @@ final class AppModel {
     @ObservationIgnored var searchDelay: TimeInterval = 0.15
     @ObservationIgnored private var pendingSearch: DispatchWorkItem?
 
-    /// Steps to the next or previous match of the search in the note: in the editor, unless only the preview is shown.
     func stepMatch(forward: Bool) {
         guard currentNote != nil, let tv = layout == .preview ? searchStepper.preview : searchStepper.editor else { return }
         searchStepper.step(forward: forward, in: tv)
     }
 
-    /// Edit → Find in Note (⌘F): opens the find bar of the open note, wherever the focus is. In the preview when it has
-    /// the focus or is all that is shown, otherwise in the editor. Beeps without a note.
     func findInNote(in window: NSWindow? = nil) {
         let window = window ?? NSApp.keyWindow
         let preview = searchStepper.preview
@@ -154,7 +144,6 @@ final class AppModel {
         tv.performTextFinderAction(item)
     }
 
-    /// Lists the notes found by the search typed so far.
     func searchNow() {
         pendingSearch?.cancel()
         pendingSearch = nil
@@ -186,8 +175,6 @@ final class AppModel {
         didSet { defaults.set(layout.rawValue, forKey: "layout") }
     }
 
-    // MARK: Text settings
-
     var editorFont: FontFamily = .system {
         didSet { defaults.set(editorFont.name, forKey: "editorFont") }
     }
@@ -208,7 +195,6 @@ final class AppModel {
         didSet { defaults.set(codeFont.name, forKey: "codeFont") }
     }
 
-    /// Keeps lines at a comfortable reading length in wide windows.
     var readableWidth = true {
         didSet { defaults.set(readableWidth, forKey: "readableWidth") }
     }
@@ -217,19 +203,14 @@ final class AppModel {
         didSet { defaults.set(loadRemoteImages, forKey: "loadRemoteImages") }
     }
 
-    // MARK: Tags visibility
-
     var showSidebarTags = true {
         didSet { defaults.set(showSidebarTags, forKey: "showSidebarTags") }
     }
 
-    /// Expanded state of the Tags section in the sidebar.
     var sidebarTagsExpanded = true {
         didSet { defaults.set(sidebarTagsExpanded, forKey: "sidebarTagsExpanded") }
     }
 
-    /// Notebooks expanded in the sidebar, remembered between launches.
-    /// Notebooks open in the sidebar. Not kept between launches: the app starts with the tree collapsed.
     var expandedFolders: Set<String> = []
 
     func expansion(of id: String) -> Binding<Bool> {
@@ -247,7 +228,6 @@ final class AppModel {
         expandedFolders = []
     }
 
-    /// Parent notebooks stay at the top of the sidebar while scrolling.
     var stickyNotebooks = true {
         didSet {
             defaults.set(stickyNotebooks, forKey: "stickyNotebooks")
@@ -255,7 +235,6 @@ final class AppModel {
         }
     }
 
-    /// Vim key bindings in the editor.
     var vimMode = false {
         didSet {
             defaults.set(vimMode, forKey: "vimMode")
@@ -263,10 +242,8 @@ final class AppModel {
         }
     }
 
-    /// Mode shown in the editor's status label.
     var vimState: VimEngine.Mode = .normal
 
-    /// Whether notebooks in the trash are listed under it in the sidebar.
     var trashExpanded = false {
         didSet { defaults.set(trashExpanded, forKey: "trashExpanded") }
     }
@@ -275,14 +252,10 @@ final class AppModel {
         didSet { defaults.set(showNoteTags, forKey: "showNoteTags") }
     }
 
-    /// The note list shows the date and the start of each note under its title; off, only titles.
     var showNotePreviews = false {
         didSet { defaults.set(showNotePreviews, forKey: "showNotePreviews") }
     }
 
-    // MARK: Shortcuts
-
-    /// User shortcuts; a missing entry means the default, `nil` inside means cleared.
     private(set) var shortcuts: [ShortcutAction: Hotkey?] = [:]
     private(set) var recordingShortcut: ShortcutAction?
     @ObservationIgnored private var shortcutMonitor: Any?
@@ -302,7 +275,6 @@ final class AppModel {
         defaults.removeObject(forKey: action.defaultsKey)
     }
 
-    /// Title of another command that uses the same keys.
     func shortcutConflict(for action: ShortcutAction) -> String? {
         guard let key = hotkey(for: action) else { return nil }
         if let other = ShortcutAction.allCases.first(where: { $0 != action && hotkey(for: $0) == key }) { return other.title }
@@ -324,16 +296,15 @@ final class AppModel {
         recordingShortcut = nil
     }
 
-    /// Handles a key press while recording; returns whether it was used.
     @discardableResult
     func recordShortcut(_ event: NSEvent) -> Bool {
         guard let action = recordingShortcut else { return false }
         let plain = event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty
-        if event.keyCode == 53 && plain { // Esc
+        if event.keyCode == 53 && plain {
             stopRecordingShortcut()
             return true
         }
-        if (event.keyCode == 51 || event.keyCode == 117) && plain { // ⌫ / ⌦ clear
+        if (event.keyCode == 51 || event.keyCode == 117) && plain {
             setHotkey(nil, for: action)
             stopRecordingShortcut()
             return true
@@ -357,7 +328,6 @@ final class AppModel {
         Typography(family: previewFont, size: CGFloat(previewFontSize), codeFamily: codeFont)
     }
 
-    /// ⌘+ / ⌘- / ⌘0: scales the editor and the preview together.
     func adjustTextSize(by step: Double) {
         let range = Self.fontSizes
         editorFontSize = min(range.upperBound, max(range.lowerBound, editorFontSize + step))
@@ -369,7 +339,6 @@ final class AppModel {
         previewFontSize = 15
     }
 
-    // Sync settings live in the database so that each data directory has its own sync target.
     var syncURL = "" {
         didSet { store.setSetting("sync.url", syncURL) }
     }
@@ -382,7 +351,6 @@ final class AppModel {
         didSet { store.setSetting("sync.password", syncPassword) }
     }
 
-    /// Minutes between automatic syncs; 0 syncs only on demand.
     var syncInterval = 5 {
         didSet {
             store.setSetting("sync.interval", String(syncInterval))
@@ -392,7 +360,6 @@ final class AppModel {
 
     private(set) var isSyncing = false
     private(set) var syncStatus = ""
-    /// Counts of the last run, or the full error message.
     private(set) var syncDetail = ""
     private(set) var syncFailed = false
     private(set) var lastSyncTime: Int64 = 0
@@ -411,11 +378,8 @@ final class AppModel {
     @ObservationIgnored private var syncTimer: Task<Void, Never>?
     @ObservationIgnored private var autoSyncTask: Task<Void, Never>?
     @ObservationIgnored private var syncRequestedWhileRunning = false
-    /// Delay between a local change and the automatic sync that sends it.
     @ObservationIgnored var autoSyncDelay: Duration = .seconds(10)
 
-    /// `startsEmpty`: nothing chosen in the sidebar and no note open, as the app starts; otherwise All Notes with its
-    /// first note.
     init(store: Store, defaults: UserDefaults = .standard, pasteboard: NSPasteboard = .general,
          syncTransport: HTTPTransport = URLSessionTransport(), startsEmpty: Bool = false,
          openURL: @escaping (URL) -> Void = { NSWorkspace.shared.open($0) }) {
@@ -429,7 +393,6 @@ final class AppModel {
         layout = EditorLayout(rawValue: defaults.string(forKey: "layout") ?? "") ?? .editor
         searchStepper.onStep = { [weak self] in self?.searchPosition = $0 }
         editorFontSize = defaults.object(forKey: "editorFontSize") as? Double ?? 14
-        // Earlier versions only had a "monospaced editor" switch.
         editorFont = defaults.string(forKey: "editorFont").map(FontFamily.init(name:))
             ?? (defaults.bool(forKey: "editorMonospaced") ? .monospaced : .system)
         previewFont = defaults.string(forKey: "previewFont").map(FontFamily.init(name:)) ?? .system
@@ -487,8 +450,6 @@ final class AppModel {
         }, remoteImage: loadRemoteImages ? remoteImages : nil)
     }
 
-    // MARK: - Loading
-
     func reloadSidebar() {
         folders = store.folders()
         trashedFolders = store.folders(deleted: true)
@@ -527,7 +488,6 @@ final class AppModel {
         }
     }
 
-    /// Words of the active search, highlighted in the note list, the editor and the preview.
     var searchTerms: [String] {
         SearchHighlight.terms(searchText)
     }
@@ -545,7 +505,6 @@ final class AppModel {
         }
     }
 
-    /// "Parent › Child › Notebook" for tooltips.
     func folderPath(_ id: String) -> String {
         (StickyFolders.ancestors(of: id, parentOf: sticky.parentOf) + [id]).map(folderTitle).joined(separator: " › ")
     }
@@ -554,7 +513,6 @@ final class AppModel {
         folders.first { $0.id == id }?.title ?? "No notebook"
     }
 
-    /// Nothing is chosen in the sidebar and nothing searched: the list stays empty.
     var isNothingChosen: Bool { sidebarSelection == nil && searchText.trimmingCharacters(in: .whitespaces).isEmpty }
 
     func reloadNotes(selectFirst: Bool) {
@@ -573,9 +531,7 @@ final class AppModel {
 
     private func loadSelection() {
         searchPosition = nil
-        // The note left is saved in the background; reading it again waits for that (`loadNote`).
         saveInBackground()
-        // ⌘G / ⇧⌘G in the editor then step through the matches, as after a Find.
         if let term = searchTerms.first, selectedNoteIDs.count == 1 {
             findPasteboard.clearContents()
             findPasteboard.setString(term, forType: .string)
@@ -589,8 +545,6 @@ final class AppModel {
         }
     }
 
-    /// The version of the current note's body loaded or saved here: while the database holds the same, the body in
-    /// memory is up to date, and reading a huge one again on every search keystroke would be slow.
     @ObservationIgnored private var loadedStamp: (id: String, stamp: Store.BodyStamp)?
 
     private func loadNote(_ id: String) -> Note? {
@@ -628,8 +582,6 @@ final class AppModel {
         }
     }
 
-    // MARK: - Editing
-
     func updateTitle(_ title: String) {
         guard var note = currentNote, note.title != title else { return }
         note.title = title
@@ -638,7 +590,6 @@ final class AppModel {
         scheduleSave()
     }
 
-    /// Called for actual changes only, so the (possibly huge) body is not compared.
     func updateBody(_ body: String) {
         guard var note = currentNote else { return }
         note.body = body
@@ -647,13 +598,9 @@ final class AppModel {
         scheduleSave()
     }
 
-    /// Bumped when the editor changes the body. The note is changed without telling the observers of `currentNote`:
-    /// the note's view, the note list and the menus would be rebuilt on every keystroke. Only the preview follows.
     private(set) var bodyRevision = 0
-    /// The list shows the edited note's summary once it is saved.
     @ObservationIgnored private var summaryOutdated = false
 
-    /// A change typed in the editor.
     func editBody(_ body: String) {
         guard storedNote != nil else { return }
         storedNote!.body = body
@@ -685,12 +632,9 @@ final class AppModel {
         }
     }
 
-    /// Saving a huge note (and indexing it for search) takes a good part of a second: typing pauses save on a queue
-    /// with their own connection. Everything else that touches the database waits for it first (`waitForSaves`).
     @ObservationIgnored private let saveQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.save", qos: .userInitiated)
     @ObservationIgnored private lazy var writer: SQLiteDB? = try? store.makeWriter()
 
-    /// Notes with a background save not yet reported back, and how many.
     @ObservationIgnored private var savingNotes: [String: Int] = [:]
 
     private func saveInBackground() {
@@ -722,7 +666,6 @@ final class AppModel {
         }
     }
 
-    /// Returns once background saves are written.
     private func waitForSaves() {
         saveQueue.sync {}
     }
@@ -750,8 +693,6 @@ final class AppModel {
             alert = AlertInfo(title: "Error", message: "\(error)")
         }
     }
-
-    // MARK: - Notes
 
     func newNote(isTodo: Bool = false) {
         flushSave()
@@ -838,7 +779,6 @@ final class AppModel {
         }
     }
 
-    /// Delete key / ⌘⌫: trash, or delete permanently when already in the trash.
     func deleteSelectedNotes() {
         if isTrashSelected {
             deleteNotesPermanently(selectedNoteIDs)
@@ -882,8 +822,6 @@ final class AppModel {
         }
         return true
     }
-
-    // MARK: - Folders
 
     func promptNewFolder(parent: String = "") {
         textPrompt = TextPrompt(title: parent.isEmpty ? "New Notebook" : "New Sub-notebook", placeholder: "Notebook name",
@@ -932,8 +870,6 @@ final class AppModel {
         }
     }
 
-    // MARK: - Tags
-
     func setCurrentTags(_ titles: [String]) {
         guard let note = currentNote else { return }
         let normalized = titles.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
@@ -958,8 +894,6 @@ final class AppModel {
         if sidebarSelection == .tag(tag.id) { sidebarSelection = .allNotes }
         reloadAll(select: selectedNoteIDs)
     }
-
-    // MARK: - Attachments & links
 
     func attachmentMarkdown(for urls: [URL]) -> String? {
         var parts: [String] = []
@@ -990,7 +924,6 @@ final class AppModel {
         attach(panel.urls)
     }
 
-    /// Adds files as resources and links them at the caret, or at the end of the note when the editor is hidden.
     func attach(_ urls: [URL]) {
         guard currentNote != nil, let md = attachmentMarkdown(for: urls) else { return }
         if editor.textView != nil, layout != .preview {
@@ -1025,7 +958,6 @@ final class AppModel {
         }
     }
 
-    /// Flips "- [ ]" / "- [x]" on the given 1-based source line of the current note.
     func toggleCheckbox(line: Int) {
         guard let note = currentNote, note.deletedTime == 0 else { return }
         var lines = note.body.components(separatedBy: "\n")
@@ -1041,9 +973,6 @@ final class AppModel {
         updateBody(lines.joined(separator: "\n"))
     }
 
-    // MARK: - Keyboard navigation
-
-    /// Selects the note above (-1) or below (+1) the current one in the list.
     func selectAdjacentNote(_ step: Int) {
         guard !notes.isEmpty else { return }
         let current = notes.firstIndex { selectedNoteIDs.contains($0.id) }
@@ -1070,7 +999,6 @@ final class AppModel {
         }
     }
 
-    /// Puts the cursor in the toolbar search field.
     func focusSearch(in window: NSWindow? = nil) {
         guard let window = window ?? NSApp.keyWindow ?? NSApp.mainWindow else { return }
         if let item = window.toolbar?.items.compactMap({ $0 as? NSSearchToolbarItem }).first {
@@ -1091,8 +1019,6 @@ final class AppModel {
         let all = EditorLayout.allCases
         layout = all[(all.firstIndex(of: layout)! + 1) % all.count]
     }
-
-    // MARK: - Import / export
 
     private func runImport(_ name: String, _ body: () throws -> ImportReport) {
         flushSave()
@@ -1155,8 +1081,6 @@ final class AppModel {
         }
     }
 
-    // MARK: - Sync
-
     var syncStatusLine: String {
         if isSyncing { return "Syncing…" }
         if !isSyncConfigured { return "Sync is off" }
@@ -1179,12 +1103,9 @@ final class AppModel {
         flushSave()
         isSyncing = true
         defer { isSyncing = false }
-        // The run is its own task: cancelling the caller (the auto-sync delay or the timer, which may be the
-        // very task that called us) must not abort the HTTP requests half-way with NSURLErrorCancelled.
         await Task { await runSyncs() }.value
     }
 
-    /// Syncs, then again while requests came in meanwhile (including ones made before this task got to run).
     private func runSyncs() async {
         var again = true
         while again {
@@ -1213,7 +1134,6 @@ final class AppModel {
         Task { await syncNow() }
     }
 
-    /// Sends local changes shortly after they are made.
     private func scheduleAutoSync() {
         guard isSyncConfigured, syncInterval > 0 else { return }
         autoSyncTask?.cancel()
@@ -1225,7 +1145,6 @@ final class AppModel {
         }
     }
 
-    /// Periodic sync to pick up changes made on other devices; also runs once at start-up.
     func restartSyncTimer() {
         syncTimer?.cancel()
         syncTimer = nil

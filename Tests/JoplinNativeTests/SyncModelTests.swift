@@ -49,7 +49,6 @@ import Testing
         #expect(Set(b.model.notes.map(\.id)) == Set(a.model.notes.map(\.id)))
         #expect(b.model.folders.map(\.title) == a.model.folders.map(\.title))
 
-        // Settings survive a restart; the last sync time is shown when there is no status of this session.
         let reopened = try ModelHarness(server: server, directory: b.store.directory)
         #expect(reopened.model.isSyncConfigured)
         #expect(reopened.model.syncStatusLine.hasPrefix("Synced"))

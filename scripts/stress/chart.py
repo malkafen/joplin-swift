@@ -43,7 +43,6 @@ svg = [f'<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBo
 </style>""",
        f'<rect class="surface" fill="#fcfcfb" width="{W}" height="{H}" rx="8"/>',
        f'<text class="ink" fill="#0b0b0b" x="{LEFT}" y="26" font-size="15" font-weight="600">The whole stress scenario: memory and CPU time</text>']
-# Legend.
 lx = LEFT
 for i, (label, _) in enumerate(apps):
     svg.append(f'<rect class="f{i}" fill="{COLORS[i]}" x="{lx}" y="38" width="14" height="4" rx="2"/>')
@@ -64,7 +63,6 @@ def panel(y0, title, idx, unit, fmt):
     svg.append(f'<line class="axis" stroke="#b8b7b1" x1="{LEFT}" x2="{W - RIGHT}" y1="{bottom}" y2="{bottom}"/>')
     labels = []
     for i, (label, pts) in enumerate(apps):
-        # One point per pixel column, with the highest value in it: peaks stay visible.
         columns = {}
         for t, *vals in pts:
             c = round(x(t))
@@ -73,7 +71,6 @@ def panel(y0, title, idx, unit, fmt):
         svg.append(f'<path class="s{i}" stroke="{COLORS[i]}" d="{d}" fill="none" stroke-width="2" stroke-linejoin="round"/>')
         t, *vals = pts[-1]
         labels.append([y(vals[idx - 1]), f"{label}: {fmt(vals[idx - 1])} {unit}"])
-    # Keep the end labels apart.
     labels.sort()
     for k in range(1, len(labels)):
         labels[k][0] = max(labels[k][0], labels[k - 1][0] + 16)

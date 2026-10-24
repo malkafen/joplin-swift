@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 
-/// Downloads images referenced by URL in notes, once, and announces when one arrives so previews re-render.
 @MainActor
 final class RemoteImageLoader {
     static let shared = RemoteImageLoader()
@@ -12,14 +11,12 @@ final class RemoteImageLoader {
     private var failed: Set<URL> = []
     var session: URLSession = .shared
 
-    /// `image(for:)` for renders off the main thread: the download, if needed, starts on the main thread.
     nonisolated func imageOffMain(for url: URL) -> NSImage? {
         if let image = cache.object(forKey: url as NSURL) { return image }
         DispatchQueue.main.async { MainActor.assumeIsolated { _ = self.image(for: url) } }
         return nil
     }
 
-    /// The image when it has been downloaded; otherwise starts the download and returns nil.
     func image(for url: URL) -> NSImage? {
         if let image = cache.object(forKey: url as NSURL) { return image }
         guard url.scheme == "http" || url.scheme == "https", !inFlight.contains(url), !failed.contains(url) else { return nil }
@@ -48,7 +45,6 @@ final class RemoteImageLoader {
     }
 }
 
-/// Insets a text view's container so that lines never get longer than a comfortable reading measure.
 @MainActor
 protocol ReadableWidth: NSTextView {
     var maxLineWidth: CGFloat? { get }
@@ -66,28 +62,22 @@ extension ReadableWidth {
         if textContainerInset != inset { textContainerInset = inset }
     }
 
-    /// Width available to text, images included.
     var textWidth: CGFloat {
         frame.width - 2 * textContainerInset.width - 2 * (textContainer?.lineFragmentPadding ?? 0)
     }
 }
 
-/// Marks the words of the active search where text is drawn: marking them in the text storage edits and lays out
-/// a huge note again on every key of the search, which took seconds.
 class SearchMarkingLayoutManager: NSLayoutManager {
     var searchTerms: [String] = [] {
         didSet {
             guard oldValue != searchTerms else { return }
             forgetMatches()
-            // Only what is shown: invalidating the display of a whole note with tables takes long.
             for container in textContainers {
                 if let tv = container.textView { tv.setNeedsDisplay(tv.visibleRect) }
             }
         }
     }
-    /// The match stepped to, drawn stronger than the others.
     private(set) var currentMatch: NSRange?
-    /// Every match in the text, found when the matches are first stepped through.
     private var allMatches: [NSRange]?
 
     private func forgetMatches() {
@@ -114,7 +104,6 @@ class SearchMarkingLayoutManager: NSLayoutManager {
         super.replaceTextStorage(newTextStorage)
     }
 
-    /// Makes the next match at or after `location` (forward) or the last one before it current, wrapping around.
     func step(forward: Bool, from location: Int) -> (match: NSRange, index: Int, count: Int)? {
         guard !searchTerms.isEmpty, let storage = textStorage else { return nil }
         let all = allMatches ?? SearchHighlight.ranges(of: searchTerms, in: storage.mutableString)
@@ -143,18 +132,15 @@ class SearchMarkingLayoutManager: NSLayoutManager {
         }
     }
 
-    /// Matches of the search words in or crossing into `glyphs`.
     func searchMatches(forGlyphRange glyphs: NSRange) -> [NSRange] {
         guard !searchTerms.isEmpty, let storage = textStorage else { return [] }
         let chars = characterRange(forGlyphRange: glyphs, actualGlyphRange: nil)
-        // A match ignoring case and diacritics can be longer than the word.
         let reach = 2 * (searchTerms.map { ($0 as NSString).length }.max() ?? 0)
         let from = max(0, chars.location - reach), to = min(storage.length, NSMaxRange(chars) + reach)
         return SearchHighlight.ranges(of: searchTerms, in: storage.mutableString, range: NSRange(location: from, length: to - from))
             .filter { NSIntersectionRange($0, chars).length > 0 }
     }
 
-    /// Rounded backgrounds around the glyphs of `range` on each of its lines, in container coordinates.
     func pills(forCharacterRange range: NSRange, in container: NSTextContainer, storage: NSTextStorage) -> [NSRect] {
         let glyphs = glyphRange(forCharacterRange: range, actualCharacterRange: nil)
         var result: [NSRect] = []
@@ -176,27 +162,22 @@ class SearchMarkingLayoutManager: NSLayoutManager {
     }
 }
 
-/// Where the stepped-to match is among the matches of the search in the shown note.
 struct SearchPosition: Equatable {
     var index: Int
     var count: Int
 }
 
-/// Steps through the matches of the search in the shown note: Return / ⇧Return in the search field, ⌘G / ⇧⌘G in
-/// the editor or the preview. The editor puts its cursor on the match, which the preview follows in the split layout.
 @MainActor
 final class SearchStepper {
     weak var editor: NSTextView?
     weak var preview: NSTextView?
     var onStep: ((SearchPosition) -> Void)?
 
-    /// Whether ⌘G / ⇧⌘G in `tv` step through the search: not while the find bar is used.
     func isActive(in tv: NSTextView) -> Bool {
         guard let lm = tv.layoutManager as? SearchMarkingLayoutManager, !lm.searchTerms.isEmpty else { return false }
         return !(tv.enclosingScrollView?.isFindBarVisible ?? false)
     }
 
-    /// Forward (true) or back for the Find Next / Find Previous menu items; nil for other find actions.
     static func direction(of sender: Any?) -> Bool? {
         guard let tag = (sender as? NSValidatedUserInterfaceItem)?.tag else { return nil }
         switch tag {
@@ -214,7 +195,6 @@ final class SearchStepper {
         var location: Int
         if isEditor {
             location = tv.selectedRange().location
-            // Still on the match stepped to: go past it.
             if let current = lm.currentMatch, location >= current.location, location <= NSMaxRange(current) {
                 location = current.location
                 if forward { location += 1 }
@@ -236,7 +216,6 @@ final class SearchStepper {
             if let vim = (tv as? MarkdownTextView)?.vim { vim.jump(to: found.match.location) } else { tv.setSelectedRange(found.match) }
         }
         tv.scrollRangeToVisible(found.match)
-        // Away from the edges, a third down the view.
         let glyphs = lm.glyphRange(forCharacterRange: found.match, actualCharacterRange: nil)
         let rect = lm.boundingRect(forGlyphRange: glyphs, in: container).offsetBy(dx: 0, dy: tv.textContainerOrigin.y)
         let visible = tv.visibleRect
@@ -249,7 +228,6 @@ final class SearchStepper {
     }
 }
 
-/// Find Next / Find Previous step through the search while one is active.
 @MainActor
 protocol SearchSteppingTextView: NSTextView {
     var stepper: SearchStepper? { get }
@@ -268,8 +246,6 @@ extension SearchSteppingTextView {
     }
 }
 
-/// Draws text backgrounds (inline code, keys, highlights) as rounded pills around the glyphs instead of filling
-/// the whole line height, which looks heavy with generous line spacing.
 final class PillBackgroundLayoutManager: SearchMarkingLayoutManager {
     private var origin = NSPoint.zero
 
@@ -286,7 +262,6 @@ final class PillBackgroundLayoutManager: SearchMarkingLayoutManager {
             super.fillBackgroundRectArray(rectArray, count: rectCount, forCharacterRange: charRange, color: color)
             return
         }
-        // Baselines of the lines of the range: finding the line of each rect by its point is slow in tables.
         var lines: [(fragment: NSRect, baseline: CGFloat)] = []
         let glyphs = glyphRange(forCharacterRange: charRange, actualCharacterRange: nil)
         var g = glyphs.location
@@ -309,7 +284,6 @@ final class PillBackgroundLayoutManager: SearchMarkingLayoutManager {
     }
 }
 
-/// Text view of the preview: readable width, clickable task list checkboxes and heading anchors.
 final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
     var maxLineWidth: CGFloat? {
         didSet { if oldValue != maxLineWidth { updateReadableInset() } }
@@ -330,9 +304,7 @@ final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
     let minimumInset = NSSize(width: 28, height: 22)
     var onCheckbox: ((Int) -> Void)?
     var onResize: (() -> Void)?
-    /// Called after the text changed.
     var onShow: (() -> Void)?
-    /// Top-level blocks of the shown note, for following the editor.
     var blocks: [RenderedBlock] = []
 
     override func setFrameSize(_ newSize: NSSize) {
@@ -344,7 +316,6 @@ final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
         }
     }
 
-    /// Source line of the checkbox drawn at `point` (view coordinates).
     func checkboxLine(at point: NSPoint) -> Int? {
         guard let layoutManager, let textContainer, let storage = textStorage, storage.length > 0 else { return nil }
         let p = NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y)
@@ -364,11 +335,8 @@ final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
         super.mouseDown(with: event)
     }
 
-    /// Longest preview (UTF-16) that is laid out from the top to scroll exactly to a source location.
     static let exactScrollLimit = 300_000
 
-    /// Scrolls so that the rendering of the Markdown at `location` (UTF-16) is `offset` points below the top of the
-    /// visible area. Within a block the position is interpolated, so a long table or list follows smoothly.
     func scroll(toSource location: Int, offset: CGFloat) {
         guard let layoutManager, let textContainer, let storage = textStorage, let scroll = enclosingScrollView,
               !blocks.isEmpty, blocks.last?.rendered.upperBound == storage.length else { return }
@@ -387,8 +355,6 @@ final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
             let glyph = layoutManager.glyphIndexForCharacter(at: character)
             return layoutManager.lineFragmentRect(forGlyphAt: glyph, effectiveRange: nil).minY + textContainerOrigin.y
         }
-        // Positions are estimates until the text above is laid out. Done once: typing keeps the layout. A huge preview
-        // would take seconds, so there only the block is laid out where the estimate puts it, which is where it shows.
         let from = storage.length > PreviewTextView.exactScrollLimit ? block.rendered.location : 0
         layoutManager.ensureLayout(forCharacterRange: NSRange(location: from, length: min(storage.length, block.rendered.upperBound + 1) - from))
         let start = top(of: block.rendered.location)
@@ -400,7 +366,6 @@ final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
         scroll.reflectScrolledClipView(scroll.contentView)
     }
 
-    /// Scrolls so that the heading with `slug` is at the top.
     @discardableResult
     func scrollToAnchor(_ slug: String) -> Bool {
         guard let storage = textStorage, let layoutManager, let textContainer else { return false }
@@ -419,13 +384,11 @@ final class PreviewTextView: NSTextView, ReadableWidth, SearchSteppingTextView {
     }
 }
 
-/// Read-only rendered note (TextKit 1, needed for NSTextTable / NSTextBlock).
 struct MarkdownPreview: NSViewRepresentable {
     private let box: TextBox
     var markdown: String { box.string }
     var noteId: String
     var renderer: MarkdownRenderer
-    /// A collapsed preview renders when it is shown again, not on every change.
     var isShown = true
     var readableWidth: Bool
     var highlights: [String] = []
@@ -455,12 +418,9 @@ struct MarkdownPreview: NSViewRepresentable {
 
         let tv = PreviewTextView(usingTextLayoutManager: false)
         tv.textContainer?.replaceLayoutManager(PillBackgroundLayoutManager())
-        // Laid out only where shown: a contiguous layout redoes the whole note whenever the width changes (switching
-        // the layout), which froze the app for seconds on notes below the huge-note threshold.
         tv.layoutManager?.allowsNonContiguousLayout = true
         tv.isEditable = false
         tv.isSelectable = true
-        // ⌘F finds in the preview too, in the same bar as in the editor.
         tv.usesFindBar = true
         tv.isIncrementalSearchingEnabled = true
         tv.drawsBackground = false
@@ -493,7 +453,6 @@ struct MarkdownPreview: NSViewRepresentable {
         guard let tv = c.textView else { return }
         tv.maxLineWidth = readableWidth ? renderer.typography.readableWidth : nil
         guard isShown else { return }
-        // Search words are drawn over the text, not rendered into it.
         let newTerms = c.highlights != highlights
         c.highlights = highlights
         (tv.layoutManager as? SearchMarkingLayoutManager)?.searchTerms = highlights
@@ -531,8 +490,6 @@ struct MarkdownPreview: NSViewRepresentable {
         private var renderedWidth: CGFloat = 0
         private var lastRender = Date.distantPast
         private var pendingRender: DispatchWorkItem?
-        /// While typing in the split layout the preview follows at most this often; a large note takes tens of
-        /// milliseconds to render.
         static let typingInterval: TimeInterval = 0.25
 
         init(onLink: @escaping (URL) -> Void) {
@@ -554,13 +511,11 @@ struct MarkdownPreview: NSViewRepresentable {
             return max(120, tv.textWidth)
         }
 
-        /// Images are sized to the text width: re-render when it changes noticeably.
         func widthChanged() {
             guard renderer != nil, sizedToWidth, abs(imageWidth - renderedWidth) > 24 else { return }
             DispatchQueue.main.async { [weak self] in self?.render(keepScroll: true) }
         }
 
-        /// Renders now when the preview has been idle, otherwise once the typing interval has passed.
         func renderSoon() {
             pendingRender?.cancel()
             let wait = Self.typingInterval - Date().timeIntervalSince(lastRender)
@@ -573,22 +528,16 @@ struct MarkdownPreview: NSViewRepresentable {
             DispatchQueue.main.asyncAfter(deadline: .now() + wait, execute: item)
         }
 
-        /// Notes longer than this (`quickLength`) render off the main thread, their start shown meanwhile:
-        /// rendering a huge note takes seconds.
         nonisolated static let backgroundLength = 200_000
         private var sizedToWidth = true
         private var generation = 0
-        /// A render off the main thread is running; asked again meanwhile, the latest text renders when it is done
-        /// (revealing the first match if any request wanted that).
         private var rendering = false
         private var renderAgain: (reveal: Bool, incremental: Bool)?
-        /// What the text view shows, and a number that changes with it.
         private var shown: Rendered?
         private var shownVersion = 0
         private let renderQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.preview", qos: .userInitiated)
 
         struct Rendered: @unchecked Sendable {
-            /// Made where the note is rendered: copying a huge rendering takes a while.
             var text: NSTextStorage
             var sizedToWidth: Bool
             var markdown: String
@@ -599,7 +548,6 @@ struct MarkdownPreview: NSViewRepresentable {
             var headingBases: [String] = []
             var htmlCarries = false
             var hasReferenceDefinitions = false
-            /// Holds a `$`, so formulas may be found.
             var hasDollar = false
         }
 
@@ -612,28 +560,19 @@ struct MarkdownPreview: NSViewRepresentable {
                             hasDollar: markdown.quickContains("$"))
         }
 
-        /// A change of the shown text made by rendering only the blocks around an edit.
         struct Patch: @unchecked Sendable {
-            /// Range of the shown text to replace.
             var range: NSRange
             var replacement: NSAttributedString
-            /// Added to the source lines of the checkboxes after `range`.
             var lineDelta: Int
-            /// Length of the text it was made for.
             var length: Int
-            /// What is shown once applied; its `text` is the text it was made for.
             var result: Rendered
         }
 
-        /// UTF-16 offsets where `a` and `b` start to differ and where the rest is the same again in each, with the
-        /// length of `b`; nil when they are equal. Compares UTF-16 in chunks: the editor's text is an NSString, and
-        /// converting a huge note to UTF-8 takes longer than rendering the change.
         nonisolated static func difference(_ a: String, _ b: String) -> (start: Int, oldEnd: Int, newEnd: Int, newLength: Int)? {
             let x = a as NSString, y = b as NSString
             let xl = x.length, yl = y.length, n = min(xl, yl)
             let chunk = 16_384
             var p = [unichar](repeating: 0, count: chunk), q = [unichar](repeating: 0, count: chunk)
-            /// Units that are the same from the start (`fromEnd` false) or from the end, at most `n`.
             func same(fromEnd: Bool) -> Int {
                 var done = 0
                 while done < n {
@@ -656,20 +595,12 @@ struct MarkdownPreview: NSViewRepresentable {
             }
             var start = same(fromEnd: false)
             guard start < xl || start < yl else { return nil }
-            // Whole characters: not between the halves of a surrogate pair.
             if start > 0, start < xl, UTF16.isTrailSurrogate(x.character(at: start)) { start -= 1 }
             var tail = min(same(fromEnd: true), n - start)
             if tail > 0, UTF16.isTrailSurrogate(x.character(at: xl - tail)) { tail -= 1 }
             return (start, xl - tail, yl - tail, yl)
         }
 
-        /// Renders only the blocks of `markdown` around what changed since `old`, with one more block on each side
-        /// for context (the first block of a text has no space above). Nil when the change can reach further: the
-        /// context blocks come out differently (an open code fence), the headings change so that the numbers of equal
-        /// ones after the change would, or the note has what ties distant blocks together: `[toc]`, reference
-        /// definitions, `$$` formulas, open inline HTML.
-        /// Also nil for a change of more than `backgroundLength`. Reads only the values of `old`, never its text, so it
-        /// can run off the main thread.
         nonisolated static func patch(_ old: Rendered, to markdown: String, _ renderer: MarkdownRenderer, width: CGFloat) -> Patch? {
             let o = old.blocks
             guard !o.isEmpty, !old.hasTOC, !old.htmlCarries, !old.hasReferenceDefinitions,
@@ -682,14 +613,12 @@ struct MarkdownPreview: NSViewRepresentable {
                              length: o[o.count - 1].rendered.upperBound, result: result)
             }
             let delta = change.newEnd - change.oldEnd
-            // Blocks a...b are rendered again: the changed ones and a neighbour on each side, whose spacing can change.
             let first = o.firstIndex { $0.source.upperBound >= change.start } ?? o.count
             let a = max(0, min(first, o.count - 1) - 1)
             let b = max(a, min(o.firstIndex { $0.source.location > change.oldEnd } ?? o.count, o.count - 1))
             let before = a > 0 ? a - 1 : nil, after = b + 1 < o.count ? b + 1 : nil
             let start = before.map { o[$0].source.location } ?? 0
             let end = after.map { o[$0].source.upperBound + delta } ?? change.newLength
-            // Inserting much text into the shown one is slower than showing a new one (another note, a paste).
             guard end - start <= backgroundLength else { return nil }
             func part(_ text: String, _ from: Int, _ to: Int) -> String {
                 let i = text.utf16.index(text.startIndex, offsetBy: from)
@@ -700,13 +629,10 @@ struct MarkdownPreview: NSViewRepresentable {
             guard !source.contains("$$"), !removed.contains("$$"), !source.contains(MathExtractor.open),
                   !hasReferenceDefinition(source) else { return nil }
             if hasDollar {
-                // Formulas are looked for outside of the code fences the extraction sees: the part must start outside
-                // one, and leave the rest of the note as inside or outside one as before.
                 let replaced = part(old.markdown, start, after.map { o[$0].source.upperBound } ?? (old.markdown as NSString).length)
                 guard MathExtractor.openFence(after: part(markdown, 0, start)) == nil,
                       MathExtractor.openFence(after: source) == MathExtractor.openFence(after: replaced) else { return nil }
             }
-            // Equal heading slugs are numbered in order: the part continues the numbers of the headings before it.
             var counts: [String: Int] = [:]
             for base in old.headingBases[..<o[..<(before ?? 0)].reduce(0, { $0 + $1.headings })] { counts[base, default: 0] += 1 }
             let doc = renderer.renderDocument(source, maxImageWidth: width, firstLine: before.map { o[$0].line } ?? 1,
@@ -737,7 +663,6 @@ struct MarkdownPreview: NSViewRepresentable {
             let headingsAfter = after.map { o[$0...].reduce(0) { $0 + $1.headings } } ?? 0
             let skipped = s[..<lo].reduce(0) { $0 + $1.headings }
             let kept = skipped..<(skipped + s[lo..<hi].reduce(0) { $0 + $1.headings })
-            // The numbers of equal headings after the part stay as long as it has the same ones.
             if after != nil, doc.headingBases[kept].sorted() != old.headingBases[headingsBefore..<(old.headings.count - headingsAfter)].sorted() {
                 return nil
             }
@@ -767,14 +692,10 @@ struct MarkdownPreview: NSViewRepresentable {
                          lineDelta: lineDelta, length: o[o.count - 1].rendered.upperBound, result: result)
         }
 
-        /// Turns `storage`, which shows `old`, into `new` by replacing only the blocks whose source changed, so the
-        /// rest keeps its layout: replacing everything re-lays out the note up to the visible part and blinks.
-        /// False when blocks kept could render differently in `new`; the caller then shows `new` whole.
         static func splice(_ storage: NSTextStorage, showing old: Rendered, into new: Rendered) -> Bool {
             let o = old.blocks, n = new.blocks
             guard !o.isEmpty, !n.isEmpty, o.last?.rendered.upperBound == storage.length,
                   old.width == new.width || !old.sizedToWidth && !new.sizedToWidth else { return false }
-            // Kept blocks must not depend on the changed ones: `[toc]`, numbered duplicate headings.
             if old.headings != new.headings,
                old.hasTOC || new.hasTOC || Set(old.headings).count != old.headings.count || Set(new.headings).count != new.headings.count {
                 return false
@@ -788,7 +709,6 @@ struct MarkdownPreview: NSViewRepresentable {
             while head < common, same(head, head) { head += 1 }
             var tail = 0
             while tail < common - head, same(o.count - 1 - tail, n.count - 1 - tail) { tail += 1 }
-            // A block can change the spacing of its neighbours: those are replaced too.
             head = max(0, head - 1)
             tail = max(0, tail - 1)
             let oldStart = o[head].rendered.location, newStart = n[head].rendered.location
@@ -796,7 +716,6 @@ struct MarkdownPreview: NSViewRepresentable {
             let newEnd = tail == 0 ? new.text.length : n[n.count - tail].rendered.location
             guard oldStart == newStart, storage.length - oldEnd == new.text.length - newEnd,
                   newEnd - newStart <= backgroundLength else { return false }
-            // Reference definitions change links in other blocks.
             let oldSource = om.substring(with: NSRange(location: o[head].source.location,
                                                        length: (tail == 0 ? om.length : o[o.count - tail].source.location) - o[head].source.location))
             let newSource = nm.substring(with: NSRange(location: n[head].source.location,
@@ -822,8 +741,6 @@ struct MarkdownPreview: NSViewRepresentable {
 
         nonisolated private static let referenceDefinition = try! NSRegularExpression(pattern: #"(?m)^ {0,3}\[[^\]]+\]:"#)
 
-        /// Whether `markdown` defines a link reference. Looks for "]:" first: the expression alone takes most of a second
-        /// on a huge note.
         nonisolated static func hasReferenceDefinition(_ markdown: String) -> Bool {
             guard markdown.quickContains("]:") else { return false }
             let text = markdown as NSString
@@ -839,10 +756,8 @@ struct MarkdownPreview: NSViewRepresentable {
             }
         }
 
-        /// The first paragraphs of a long note.
         static func start(of markdown: String) -> String { markdown.leadingParagraphs(limit: 20_000) }
 
-        /// `incremental`: only the text changed (typing), so unchanged blocks are kept.
         func render(keepScroll: Bool, reveal: Bool = false, incremental: Bool = false) {
             pendingRender?.cancel()
             pendingRender = nil
@@ -875,7 +790,6 @@ struct MarkdownPreview: NSViewRepresentable {
             let background = renderer
             let token = generation
             renderQueue.async { [weak self] in
-                // Typing renders only the blocks around the change: a whole huge note takes seconds.
                 let patch = base.flatMap { Self.patch($0, to: markdown, background, width: width) }
                 let result = patch == nil ? Self.rendered(markdown, background, width: width) : nil
                 RunLoop.main.perform(inModes: [.common]) {
@@ -916,8 +830,6 @@ struct MarkdownPreview: NSViewRepresentable {
             }
             let scroll = tv.enclosingScrollView
             let origin = scroll?.contentView.bounds.origin ?? .zero
-            // A new storage: replacing the text of the current one copies the attribute runs one by one, which takes
-            // minutes for a huge note.
             lm.replaceTextStorage(result.text)
             if keepScroll, let scroll {
                 scroll.contentView.scroll(to: origin)
@@ -954,7 +866,6 @@ struct MarkdownPreview: NSViewRepresentable {
             if reveal { revealFirstMatch() }
         }
 
-        /// Scrolls the first search match into the middle of the view.
         func revealFirstMatch() {
             guard let tv = textView, let storage = tv.textStorage, let layoutManager = tv.layoutManager,
                   let container = tv.textContainer, let scroll = tv.enclosingScrollView,
@@ -978,7 +889,6 @@ struct MarkdownPreview: NSViewRepresentable {
     }
 }
 
-/// Split view whose divider can be taken away: a hidden pane still leaves the divider (and its last drawing) behind.
 final class NoteSplitNSView: NSSplitView {
     var showsDivider = true {
         didSet { if oldValue != showsDivider { needsDisplay = true } }
@@ -989,8 +899,6 @@ final class NoteSplitNSView: NSSplitView {
     }
 }
 
-/// Editor and preview in a native split view. Changing the layout collapses a pane instead of replacing the views:
-/// loading a huge note into a new editor or preview takes a noticeable time, switching should not.
 struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
     var layout: EditorLayout
     var editor: Editor
@@ -1024,14 +932,12 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
         let preview: NSHostingView<Preview>
         weak var split: NoteSplitNSView?
         private var layout: EditorLayout?
-        /// Share of the width the editor takes in the split layout, as last dragged.
         private var fraction: CGFloat = 0.5
         static var minimumWidth: CGFloat { 220 }
 
         init(editor: Editor, preview: Preview) {
             self.editor = NSHostingView(rootView: editor)
             self.preview = NSHostingView(rootView: preview)
-            // The panes take the size the split view gives them.
             self.editor.sizingOptions = []
             self.preview.sizingOptions = []
         }
@@ -1039,7 +945,6 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
         private weak var editorText: NSTextView?
         private weak var previewText: PreviewTextView?
 
-        /// In the split layout the preview follows the editor's scrolling, so the edited text stays in view in both.
         func followEditor() {
             if editorText == nil, let tv = textView(in: editor), let clip = tv.enclosingScrollView?.contentView {
                 editorText = tv
@@ -1055,7 +960,6 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
 
         private var syncQueued = false
 
-        /// Synced at once and again after the display: a far jump settles the editor's layout only while drawing.
         @objc private func editorScrolled(_ notification: Notification) {
             syncPreview()
             guard !syncQueued else { return }
@@ -1070,8 +974,6 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
             guard layout == .split, let tv = editorText, let preview = previewText, let clip = tv.enclosingScrollView?.contentView,
                   let lm = tv.layoutManager, let container = tv.textContainer else { return }
             let visible = clip.bounds
-            // The caret's line when it is in view, at the same height in both panes: blocks render taller or shorter
-            // than their source (tables), so lining up the top lines can leave the edited line out of the preview.
             let length = (tv.string as NSString).length
             let caret = tv.selectedRange().location
             if length > 0, caret <= length {
@@ -1090,7 +992,6 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
                 preview.scroll(toSource: Int.max, offset: -.greatestFiniteMagnitude)
                 return
             }
-            // The first line in view. After a jump (Vim `G`) it is not laid out yet: the scroll comes before the display.
             let line = NSRect(x: 0, y: visible.minY - tv.textContainerOrigin.y, width: container.size.width, height: 1)
             let glyphs = lm.glyphRange(forBoundingRect: line, in: container)
             guard glyphs.location < lm.numberOfGlyphs else { return }
@@ -1104,7 +1005,6 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
             let old = layout
             layout = new
             let window = split.window
-            // Keys go to the pane that stays visible, not to a hidden text view.
             let focused = (window?.firstResponder as? NSView).map { $0.isDescendant(of: split) } ?? false
             editor.isHidden = new == .preview
             preview.isHidden = new == .editor
@@ -1154,7 +1054,6 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
     }
 }
 
-/// Native token field for note tags with completion of existing tags.
 struct TagField: NSViewRepresentable {
     var tags: [String]
     var allTags: [String]

@@ -75,8 +75,6 @@ struct SplitMix: RandomNumberGenerator {
         }
     }
 
-    /// Refreshing only around an edit must give exactly what highlighting the whole text gives.
-    /// The blocks found from one pass over the text are those the patterns find.
     @Test func scannedBlocksMatchThePatterns() {
         var rng = SplitMix(state: UInt64(ProcessInfo.processInfo.environment["JN_FUZZ_SEED"] ?? "") ?? 1)
         let iterations = Int(ProcessInfo.processInfo.environment["JN_FUZZ_N"] ?? "") ?? 300
@@ -136,8 +134,6 @@ struct SplitMix: RandomNumberGenerator {
         }
     }
 
-    /// With a small window: inside it the style is the full highlight's, outside it the base style, while editing
-    /// and scrolling at random.
     @Test func windowedHighlightMatchesFullHighlight() {
         var rng = SplitMix(state: UInt64(ProcessInfo.processInfo.environment["JN_FUZZ_SEED"] ?? "") ?? 1)
         let iterations = Int(ProcessInfo.processInfo.environment["JN_FUZZ_N"] ?? "") ?? 300
@@ -163,7 +159,6 @@ struct SplitMix: RandomNumberGenerator {
                 }
                 let reference = NSTextStorage(string: storage.string)
                 MarkdownHighlighter().highlight(reference)
-                // The base style, with the fonts the text storage substitutes (emoji) like in the editor.
                 let plain = NSTextStorage(string: storage.string)
                 plain.setAttributes(MarkdownHighlighter().baseAttributes, range: NSRange(location: 0, length: plain.length))
                 var mismatch: Int?

@@ -43,8 +43,6 @@ struct ContentView: View {
     }
 }
 
-// MARK: - Sidebar
-
 struct SidebarView: View {
     @Environment(AppModel.self) private var model
 
@@ -103,7 +101,6 @@ struct SidebarView: View {
                 if model.trashedFolders.isEmpty {
                     trashRow
                 } else {
-                    // Notebooks in the trash fold under it like sub-notebooks; collapsed by default.
                     DisclosureGroup(isExpanded: $model.trashExpanded) {
                         ForEach(model.trashedFolders) { folder in
                             Label(folder.title, systemImage: "folder")
@@ -134,7 +131,6 @@ struct SidebarView: View {
     }
 }
 
-/// Notebook rows with disclosure triangles; which notebooks are expanded is kept in the model (and remembered).
 struct FolderTreeRows: View {
     let nodes: [FolderNode]
     @Environment(AppModel.self) private var model
@@ -183,8 +179,6 @@ struct FolderTreeRows: View {
     }
 }
 
-/// Group title as a plain row: sidebar Section headers get a system collapse button on hover that collides with
-/// header buttons.
 struct SidebarHeader<Accessory: View>: View {
     let title: String
     @ViewBuilder var accessory: Accessory
@@ -237,7 +231,6 @@ struct SyncStatusBar: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)
-        // The list scrolls under this bar; without a background the last rows show through the text.
         .background(.bar)
         .overlay(alignment: .top) { Divider() }
     }
@@ -245,7 +238,6 @@ struct SyncStatusBar: View {
 
 struct FolderRow: View {
     let folder: Folder
-    /// Outside a sidebar list the icon is not tinted automatically.
     var accentIcon = false
 
     var body: some View {
@@ -264,8 +256,6 @@ struct FolderRow: View {
         }
     }
 }
-
-// MARK: - Note list
 
 struct NoteListView: View {
     @Environment(AppModel.self) private var model
@@ -310,7 +300,6 @@ struct NoteListView: View {
         .navigationTitle(model.listTitle)
         .navigationSubtitle(model.isNothingChosen ? "" : model.notes.count == 1 ? "1 note" : "\(model.notes.count) notes")
         .searchable(text: $model.searchText, placement: .toolbar, prompt: "Search all notes")
-        // Return / ⇧Return step through the matches in the note.
         .onSubmit(of: .search) { model.stepMatch(forward: !NSEvent.modifierFlags.contains(.shift)) }
         .toolbar {
             ToolbarItemGroup {
@@ -381,7 +370,6 @@ struct NoteRow: View {
     @Environment(AppModel.self) private var model
 
     private var done: Bool { note.isTodo && note.todoCompleted > 0 }
-    /// Search results keep the text around the match even when the list shows only titles.
     private var showsPreview: Bool { model.showNotePreviews || !model.searchTerms.isEmpty }
 
     var body: some View {
@@ -412,7 +400,6 @@ struct NoteRow: View {
         .padding(.vertical, showsPreview ? 4 : 2)
     }
 
-    /// Marks the words of the active search.
     private func highlighted(_ text: String) -> AttributedString {
         var result = AttributedString(text)
         let ranges = SearchHighlight.ranges(of: model.searchTerms, in: text)
@@ -443,9 +430,6 @@ func longDate(_ ms: Int64) -> String {
     return Date(timeIntervalSince1970: Double(ms) / 1000).formatted(date: .abbreviated, time: .shortened)
 }
 
-// MARK: - Editor
-
-/// The current note without its body.
 private struct NoteInfo: Equatable {
     var id: String
     var parentId: String
@@ -473,8 +457,6 @@ struct NoteEditorView: View {
     var body: some View {
         @Bindable var model = model
         Group {
-            // Not `if let note`: SwiftUI compares the values views hold or capture, and comparing huge bodies on every
-            // keystroke is slow. The chrome gets the note without its body, the editor its body in a `TextBox`.
             if let note = model.currentNote.map(NoteInfo.init) {
                 editor(note)
             } else if model.selectedNoteIDs.count > 1 {
@@ -601,7 +583,6 @@ struct NoteEditorView: View {
     }
 }
 
-/// The source editor of the current note. Its own view: it reads the body, which the editor changes on every keystroke.
 private struct EditorPane: View {
     @Environment(AppModel.self) private var model
     var noteId: String
@@ -639,13 +620,11 @@ private struct EditorPane: View {
     }
 }
 
-/// The rendered current note; follows the editor through `bodyRevision`.
 private struct PreviewPane: View {
     @Environment(AppModel.self) private var model
     var noteId: String
 
     var body: some View {
-        // Collapsed, it renders once shown: typing need not update it.
         let shown = model.layout != .editor
         let _ = shown ? model.bodyRevision : 0
         MarkdownPreview(markdown: model.currentNote?.body ?? "", noteId: noteId, renderer: model.renderer,
@@ -654,7 +633,6 @@ private struct PreviewPane: View {
     }
 }
 
-/// Counts shown under the note.
 struct NoteStats: Equatable, Sendable {
     var lines = 0
     var words = 0
@@ -663,12 +641,10 @@ struct NoteStats: Equatable, Sendable {
 
     init() {}
 
-    /// Reads the text once, byte by byte: a huge note is counted in a few milliseconds.
     init(_ text: String, terms: [String]) {
         var lines = text.isEmpty ? 0 : 1, words = 0, inWord = false
         for b in text.utf8 {
             if b == 10 { lines += 1 }
-            // Letters and digits of any script (non-ASCII bytes) make words; spaces and punctuation separate them.
             let wordByte = b >= 0x80 || (b >= 48 && b <= 57) || (b >= 65 && b <= 90) || (b >= 97 && b <= 122) || b == 95
             if wordByte, !inWord { words += 1 }
             inWord = wordByte || (inWord && b == 39)
@@ -679,11 +655,9 @@ struct NoteStats: Equatable, Sendable {
         matches = terms.isEmpty ? 0 : SearchHighlight.ranges(of: terms, in: text).count
     }
 
-    /// Minutes to read at 200 words a minute.
     var readingMinutes: Int { Int((Double(words) / 200).rounded()) }
 }
 
-/// Quiet line under the note: when it was created, its size, and the matches of the search.
 private struct NoteFooter: View {
     @Environment(AppModel.self) private var model
     var noteId: String
@@ -708,7 +682,6 @@ private struct NoteFooter: View {
         .foregroundStyle(.tertiary)
         .padding(.horizontal, 24)
         .frame(height: 24)
-        // Counted off the main thread once typing pauses; small notes at once.
         .task(id: "\(noteId)|\(model.bodyRevision)|\(terms)") {
             let body = model.currentNote?.body ?? ""
             if body.quickLength > 50_000 {
@@ -754,8 +727,6 @@ private struct NoteFooter: View {
         .controlSize(.small)
     }
 }
-
-// MARK: - Settings
 
 struct SettingsView: View {
     @Environment(AppModel.self) private var model

@@ -3,57 +3,35 @@ import JoplinCore
 import Markdown
 
 extension NSAttributedString.Key {
-    /// Slug of a heading, the target of `#slug` links and the table of contents.
     static let jnAnchor = NSAttributedString.Key("JNAnchor")
-    /// `CheckboxLine` of a task list checkbox; clicking it toggles the box in the note.
     static let jnCheckbox = NSAttributedString.Key("JNCheckbox")
 }
 
-/// 1-based source line of a task list checkbox. A reference, so the preview can shift the lines of the blocks it keeps
-/// when an edit above adds or removes lines, without touching (and re-laying out) its text.
 final class CheckboxLine: NSObject {
     var line: Int
     init(_ line: Int) { self.line = line }
 }
 
-/// A top-level block of a rendered note.
 struct RenderedBlock {
-    /// UTF-16 range of the block's source lines in the Markdown.
     var source: NSRange
-    /// 1-based first source line.
     var line: Int
-    /// Range of the block in the rendered text.
     var rendered: NSRange
-    /// Headings in the block.
     var headings = 0
 }
 
-/// A rendered note with what the preview needs to update and scroll it block by block.
 struct RenderedDocument {
     var text: NSAttributedString
-    /// Holds images or diagrams sized to `maxImageWidth`.
     var sizedToWidth: Bool
-    /// In document order; together they cover the whole text.
     var blocks: [RenderedBlock]
-    /// Heading slugs in document order.
     var headings: [String]
-    /// Holds a `[toc]`, which depends on every heading.
     var hasTOC: Bool
-    /// Heading slugs before the number that tells equal ones apart.
     var headingBases: [String] = []
-    /// Inline HTML left open at the end of a block styles the blocks after it.
     var htmlCarries = false
 }
 
-/// Renders Markdown into an NSAttributedString using AppKit text blocks and tables (no web view).
-///
-/// Beyond CommonMark and GFM (tables, task lists, strikethrough) it supports what Joplin notes use: `$…$` and
-/// `$$…$$` math, `==highlight==`, inline and block HTML (`<img width>`, `<kbd>`, `<mark>`, `<sup>`…), GitHub
-/// alerts (`> [!NOTE]`), `[toc]`, heading anchors, bare URLs and syntax highlighting in fenced code.
 struct MarkdownRenderer {
     var typography: Typography
     var resolveResource: (String) -> (Resource, URL)?
-    /// Returns a downloaded remote image, or nil (the renderer then shows a placeholder).
     var remoteImage: ((URL) -> NSImage?)?
     var loadsRemoteImages: Bool { remoteImage != nil }
 
@@ -81,7 +59,6 @@ struct MarkdownRenderer {
 
     private static let diagramCache = NSCache<NSString, NSImage>()
 
-    /// Mermaid diagram for `source`, cached: the preview re-renders on every keystroke in split view.
     static func mermaid(_ source: String, fontSize: CGFloat) -> NSImage? {
         let key = "\(fontSize)|\(source)" as NSString
         if let cached = diagramCache.object(forKey: key) { return cached }
@@ -90,8 +67,6 @@ struct MarkdownRenderer {
         return image
     }
 
-    /// draw.io diagram stored in a resource: an SVG exported by draw.io (with the diagram embedded) or a
-    /// `.drawio` file. PNG exports render as ordinary images.
     static func drawio(_ res: Resource, url: URL) -> NSImage? {
         let ext = res.fileExtension.lowercased()
         let isSVG = res.mime == "image/svg+xml" || ext == "svg"
@@ -109,12 +84,8 @@ struct MarkdownRenderer {
         renderDocument(markdown, maxImageWidth: maxImageWidth).text
     }
 
-    /// The rendered note with the source and rendered range of each top-level block. When `markdown` is a part of
-    /// the note, `firstLine` is the line it starts at, `headingsBefore` counts the heading slugs before it (equal
-    /// ones get numbers), and `endsNote` false keeps the breaks after its last block.
     func renderDocument(_ markdown: String, maxImageWidth: CGFloat = 640, firstLine: Int = 1, headingsBefore: [String: Int] = [:],
                         endsNote: Bool = true) -> RenderedDocument {
-        // The extraction keeps the lines, so block lines are lines of `markdown`.
         let (source, formulas) = MathExtractor.extract(markdown)
         let document = Document(parsing: source)
         let builder = AttributedBuilder(renderer: self, maxImageWidth: maxImageWidth, formulas: formulas)
@@ -136,11 +107,9 @@ struct MarkdownRenderer {
                                         rendered: NSRange(location: start, length: builder.out.length - start),
                                         headings: builder.headingIndex - headings))
         }
-        // Drop the trailing paragraph break and spacers.
         while endsNote, builder.out.length > 0, builder.out.mutableString.character(at: builder.out.length - 1) == 10 {
             builder.out.deleteCharacters(in: NSRange(location: builder.out.length - 1, length: 1))
         }
-        // Blocks cover the text without gaps: one without a source range joins the next.
         var position = 0
         for i in blocks.indices {
             let end = i == blocks.count - 1 ? builder.out.length : min(blocks[i].rendered.upperBound, builder.out.length)
@@ -152,7 +121,6 @@ struct MarkdownRenderer {
                                 headingBases: builder.headingBases, htmlCarries: htmlCarries)
     }
 
-    /// UTF-16 offsets of the line starts, followed by the length.
     static func lineStarts(_ text: String) -> [Int] {
         var starts = [0]
         var i = 0
@@ -164,7 +132,6 @@ struct MarkdownRenderer {
         return starts
     }
 
-    /// GitHub-style heading anchor: lowercase, punctuation removed, spaces as dashes.
     static func slug(_ title: String) -> String {
         let lowered = title.lowercased()
         var s = ""
@@ -179,8 +146,6 @@ struct MarkdownRenderer {
     }
 }
 
-// MARK: - Styles
-
 private struct InlineStyle {
     var size: CGFloat
     var color: NSColor = .labelColor
@@ -192,7 +157,7 @@ private struct InlineStyle {
     var underline = false
     var mark = false
     var kbd = false
-    var script = 0 // 1 superscript, -1 subscript
+    var script = 0
     var link: URL?
 }
 
@@ -216,9 +181,6 @@ private let stripeFill = NSColor(name: nil) { appearance in
         : NSColor(white: 0, alpha: 0.022)
 }
 
-/// A text block that draws a rounded background, an optional bar on its leading edge and an optional caption in
-/// the top trailing corner (the language of a code block). The caption is drawn, not part of the text, so it is
-/// never selected or copied.
 final class DecoratedBlock: NSTextBlock {
     var fill: NSColor?
     var bar: NSColor?
@@ -238,7 +200,6 @@ final class DecoratedBlock: NSTextBlock {
 
     override func drawBackground(withFrame frameRect: NSRect, in controlView: NSView?, characterRange charRange: NSRange,
                                  layoutManager: NSLayoutManager) {
-        // The frame includes the margins; the decoration covers only padding and content.
         let rect = NSRect(x: frameRect.minX + width(for: .margin, edge: .minX),
                           y: frameRect.minY + width(for: .margin, edge: .minY),
                           width: frameRect.width - width(for: .margin, edge: .minX) - width(for: .margin, edge: .maxX),
@@ -262,10 +223,6 @@ final class DecoratedBlock: NSTextBlock {
     }
 }
 
-// MARK: - HTML
-
-/// A forgiving tokenizer for the HTML that turns up in notes (Joplin itself writes `<img width>` for resized
-/// images). It is not a full parser: unknown tags are dropped and their text kept.
 enum HTMLTokens {
     enum Piece: Equatable {
         case text(String)
@@ -286,7 +243,7 @@ enum HTMLTokens {
                 out.append(.text(decode(ns.substring(with: NSRange(location: last, length: m.range.location - last)))))
             }
             last = m.range.location + m.range.length
-            guard m.range(at: 2).location != NSNotFound else { continue } // comment
+            guard m.range(at: 2).location != NSNotFound else { continue }
             let name = ns.substring(with: m.range(at: 2)).lowercased()
             let closing = m.range(at: 1).length > 0
             var attributes: [String: String] = [:]
@@ -342,7 +299,6 @@ enum HTMLTokens {
     ]
 }
 
-/// Inline formatting opened by HTML tags, applied on top of the Markdown style.
 private struct HTMLState {
     var counts: [String: Int] = [:]
     var links: [URL?] = []
@@ -387,8 +343,6 @@ private struct HTMLState {
     }
 }
 
-// MARK: - Builder
-
 private final class AttributedBuilder {
     let renderer: MarkdownRenderer
     let maxImageWidth: CGFloat
@@ -400,9 +354,7 @@ private final class AttributedBuilder {
     private var headings: [(level: Int, title: String, slug: String)] = []
     private(set) var headingIndex = 0
     private(set) var headingBases: [String] = []
-    /// Added to the source lines of checkboxes.
     var lineOffset = 0
-    /// Symbols drawn so far: making one is slow, and a long checklist needs thousands of the same.
     private var symbols: [String: NSAttributedString] = [:]
     private(set) var sizedToWidth = false
     private(set) var hasTOC = false
@@ -421,12 +373,10 @@ private final class AttributedBuilder {
     private var typography: Typography { renderer.typography }
     private var base: CGFloat { typography.size }
 
-    /// Headings in document order with unique slugs, for anchors and `[toc]`.
     func collectHeadings(_ document: Document, before: [String: Int] = [:]) {
         var seen = before.compactMapValues { $0 > 0 ? $0 - 1 : nil }
         func walk(_ m: Markup) {
             if let h = m as? Heading {
-                // Formulas by their TeX, not by their number in the note.
                 let title = restoreMath(Self.plainText(h))
                 var slug = MarkdownRenderer.slug(title)
                 headingBases.append(slug)
@@ -444,7 +394,6 @@ private final class AttributedBuilder {
         walk(document)
     }
 
-    /// Text of inline markup without Markdown syntax (`plainText` keeps the backticks of code spans).
     static func plainText(_ m: Markup) -> String {
         switch m {
         case let t as Markdown.Text: return t.string
@@ -453,8 +402,6 @@ private final class AttributedBuilder {
         default: return m.children.map(plainText).joined()
         }
     }
-
-    // MARK: Attributes
 
     private func font(_ s: InlineStyle) -> NSFont {
         let size = s.script != 0 ? s.size * 0.75 : s.size
@@ -504,8 +451,6 @@ private final class AttributedBuilder {
         out.append(NSAttributedString(string: string, attributes: attrs(html.style(s))))
     }
 
-    // MARK: Blocks
-
     func blocks<S: Sequence>(_ children: S, _ b: BlockStyle) where S.Element == Markup {
         for child in children { block(child, b) }
     }
@@ -524,7 +469,6 @@ private final class AttributedBuilder {
             heading(h, b)
         case let c as CodeBlock:
             let language = c.language?.lowercased()
-            // The extraction can take a fence differently (closing it at "```swift"), so formulas can end up inside.
             let code = restoreMath(c.code)
             if language == "math" || language == "latex" || language == "katex" || language == "tex" {
                 displayMath(code, b)
@@ -571,7 +515,6 @@ private final class AttributedBuilder {
         for inline in inlines { self.inline(inline, style) }
         html = HTMLState()
         out.append(NSAttributedString(string: "\n", attributes: attrs(style)))
-        // Line spacing is a multiple of the line height: lines with large images would get huge gaps.
         var hasLargeImage = false
         out.enumerateAttribute(.attachment, in: NSRange(location: p.start, length: out.length - p.start)) { value, _, stop in
             if let a = value as? NSTextAttachment, a.bounds.height > base * 2.5 {
@@ -625,7 +568,6 @@ private final class AttributedBuilder {
         bb.textBlocks.append(box)
         var text = code
         while text.hasSuffix("\n") { text.removeLast() }
-        // Line separators keep the whole block in one paragraph (one box).
         text = text.replacingOccurrences(of: "\n", with: "\u{2028}")
         var s = InlineStyle(size: base, color: b.color)
         s.code = true
@@ -637,7 +579,6 @@ private final class AttributedBuilder {
                          range: NSRange(location: p.start, length: out.length - p.start))
     }
 
-    /// A diagram centred in its own paragraph, optionally on a card like code blocks.
     private func diagram(_ image: NSImage, card: Bool, _ b: BlockStyle) {
         sizedToWidth = true
         var bb = b
@@ -685,8 +626,6 @@ private final class AttributedBuilder {
         return formulas[index]
     }
 
-    // MARK: Quotes and alerts
-
     private static let alerts: [String: (title: String, symbol: String, color: NSColor)] = [
         "NOTE": ("Note", "info.circle", .systemBlue),
         "TIP": ("Tip", "lightbulb", .systemGreen),
@@ -695,7 +634,6 @@ private final class AttributedBuilder {
         "CAUTION": ("Caution", "exclamationmark.octagon", .systemRed),
     ]
 
-    /// The alert kind of a `> [!NOTE]` quote and the remaining inlines of its first paragraph.
     private func alert(_ q: BlockQuote) -> (kind: String, rest: [Markup])? {
         guard let first = q.child(at: 0) as? Paragraph, let text = first.child(at: 0) as? Markdown.Text else { return nil }
         let s = text.string.trimmingCharacters(in: .whitespaces)
@@ -722,7 +660,6 @@ private final class AttributedBuilder {
             box.setWidth(9, type: .absoluteValueType, for: .padding, edge: .maxY)
             box.setWidth(12, type: .absoluteValueType, for: .padding, edge: .maxX)
             bb.textBlocks.append(box)
-            // Title line: symbol and name in the alert colour.
             var title = InlineStyle(size: base, color: info.color)
             title.bold = true
             let p = beginParagraph(bb)
@@ -738,20 +675,15 @@ private final class AttributedBuilder {
             bb.color = .secondaryLabelColor
             blocks(q.children, bb)
         }
-        // Content of the quote ends with its last paragraph's spacing inside the box; trim it so the bar ends
-        // with the text.
         trimLastParagraphSpacing(to: 0)
         spaceAfterBlock(b)
     }
 
-    /// Space above a boxed block (code, quote, table): TextKit ignores the spacing of the paragraph before a text
-    /// block, so the box gets a top margin unless it starts the note or a list item.
     private func spaceBeforeBlock(_ block: NSTextBlock) {
         guard out.length > 0, pendingPrefix == nil else { return }
         block.setWidth((base * 0.6).rounded(), type: .absoluteValueType, for: .margin, edge: .minY)
     }
 
-    /// Adds a spacer paragraph after a boxed block so the next paragraph does not touch it.
     private func spaceAfterBlock(_ b: BlockStyle) {
         let start = out.length
         out.append(NSAttributedString(string: "\n", attributes: [.font: NSFont.systemFont(ofSize: 2)]))
@@ -767,8 +699,6 @@ private final class AttributedBuilder {
         m.paragraphSpacing = spacing
         out.addAttribute(.paragraphStyle, value: m, range: effective)
     }
-
-    // MARK: Lists
 
     private func list(_ items: [ListItem], ordered: Bool, start: Int, _ b: BlockStyle) {
         let bullets = ["•", "◦", "▪︎"]
@@ -819,7 +749,6 @@ private final class AttributedBuilder {
                 if let p = child as? Paragraph {
                     paragraph(p.children, inner, style: InlineStyle(size: base, color: itemColor), after: itemAfter)
                 } else {
-                    // Blocks such as code cannot carry the marker inline: put it on its own line first.
                     if pendingPrefix != nil, !(child is HTMLBlock) {
                         paragraph([Markup](), inner, style: InlineStyle(size: base, color: itemColor), after: itemAfter)
                     }
@@ -830,11 +759,8 @@ private final class AttributedBuilder {
                 paragraph([Markup](), inner, style: InlineStyle(size: base, color: itemColor), after: itemAfter)
             }
         }
-        // Space after the outermost list.
         if b.listDepth == 0 { trimLastParagraphSpacing(to: (base * 0.8).rounded()) }
     }
-
-    // MARK: Tables
 
     private func table(_ t: Markdown.Table, _ b: BlockStyle) {
         let headCells = Array(t.head.cells)
@@ -861,7 +787,7 @@ private final class AttributedBuilder {
         func row(_ cells: [Markdown.Table.Cell], index: Int, header: Bool) {
             for col in 0..<columns {
                 let cell = col < cells.count ? cells[col] : nil
-                if let cell, cell.colspan == 0 || cell.rowspan == 0 { continue } // covered by a spanning cell
+                if let cell, cell.colspan == 0 || cell.rowspan == 0 { continue }
                 let colspan = Int(cell?.colspan ?? 1)
                 let rowspan = Int(cell?.rowspan ?? 1)
                 let cellBlock = NSTextTableBlock(table: table, startingRow: index, rowSpan: max(1, rowspan),
@@ -903,8 +829,6 @@ private final class AttributedBuilder {
                          range: NSRange(location: start, length: 1))
     }
 
-    // MARK: Table of contents
-
     private func isTOC(_ p: Paragraph) -> Bool {
         let text = p.plainText.trimmingCharacters(in: .whitespaces).lowercased()
         return text == "[toc]" || text == "[[toc]]" || text == "${toc}"
@@ -935,8 +859,6 @@ private final class AttributedBuilder {
         }
         spaceAfterBlock(b)
     }
-
-    // MARK: HTML
 
     private func htmlBlock(_ rawHTML: String, _ b: BlockStyle) {
         let pieces = HTMLTokens.pieces(rawHTML)
@@ -992,7 +914,6 @@ private final class AttributedBuilder {
             }
         }
         html = HTMLState()
-        // Trim trailing breaks and whitespace.
         while out.length > p.start, let last = out.string.unicodeScalars.last,
               last == "\u{2028}" || last == " " {
             out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1))
@@ -1009,8 +930,6 @@ private final class AttributedBuilder {
         let width = attributes["width"].flatMap { Double($0.replacingOccurrences(of: "px", with: "")) }.map { CGFloat($0) }
         image(source: src, alt: alt, width: width, s)
     }
-
-    // MARK: Inlines
 
     private func inline(_ m: Markup, _ s: InlineStyle) {
         switch m {
@@ -1080,7 +999,6 @@ private final class AttributedBuilder {
         }
     }
 
-    /// Text with math placeholders, `==highlights==` and bare links.
     private func text(_ string: String, _ s: InlineStyle) {
         guard string.contains(MathExtractor.open) else {
             highlighted(string, s)
@@ -1119,7 +1037,6 @@ private final class AttributedBuilder {
 
     private func linkified(_ string: String, _ s: InlineStyle) {
         guard !string.isEmpty else { return }
-        // Only web and mail links are kept below: text that cannot hold one skips the (slow) detector.
         guard s.link == nil, html.links.isEmpty, let detector = Self.linkDetector, Self.mayHoldLink(string) else {
             append(string, s)
             return
@@ -1128,7 +1045,6 @@ private final class AttributedBuilder {
         var last = 0
         for m in detector.matches(in: string, range: NSRange(location: 0, length: ns.length)) {
             guard let url = m.url, url.scheme == "http" || url.scheme == "https" || url.scheme == "mailto" else { continue }
-            // Only what reads as a link: not bare names such as "Draw.io" or "file.md".
             let found = ns.substring(with: m.range).lowercased()
             guard found.hasPrefix("http://") || found.hasPrefix("https://") || found.hasPrefix("www.") || url.scheme == "mailto"
             else { continue }
@@ -1141,7 +1057,6 @@ private final class AttributedBuilder {
         append(ns.substring(from: last), s)
     }
 
-    /// Whether the text contains "@", "http" or "www." (any case).
     private static func mayHoldLink(_ string: String) -> Bool {
         var string = string
         return string.withUTF8 { b in
@@ -1158,7 +1073,6 @@ private final class AttributedBuilder {
         }
     }
 
-    /// Puts formulas back into code, where they must stay literal.
     private func restoreMath(_ code: String) -> String {
         guard code.contains(MathExtractor.open) else { return code }
         let ns = code as NSString
@@ -1186,9 +1100,6 @@ private final class AttributedBuilder {
         return URL(string: d) ?? d.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed).flatMap(URL.init(string:))
     }
 
-    // MARK: Images and symbols
-
-    /// An SF Symbol sized and centred on the text of `font`.
     private func symbolAttachment(_ name: String, color: NSColor, font: NSFont) -> NSAttributedString? {
         symbolAttachment(name, colors: [color], font: font)
     }
@@ -1225,7 +1136,6 @@ private final class AttributedBuilder {
         out.append(a)
     }
 
-    /// Draws `image` with softly rounded corners, lazily at the resolution of the screen.
     private static func rounded(_ image: NSImage, size: CGSize) -> NSImage {
         guard size.width >= 24, size.height >= 24 else { return image }
         let radius = min(6, size.width / 8, size.height / 8)
