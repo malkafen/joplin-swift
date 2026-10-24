@@ -121,12 +121,14 @@ import Testing
             let trimmed = line.trimmingCharacters(in: .whitespaces)
             let fence = trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") ? String(trimmed.prefix(3)) : nil
             let head = MathExtractor.head(line)
-            #expect(head.fence == fence && head.display == (trimmed == "$$"), "\(line.debugDescription)")
+            #expect(head.fence == fence && (head == .display) == (trimmed == "$$"), "\(line.debugDescription)")
             let sub = Substring("a\n" + line).dropFirst(2)
             #expect(MathExtractor.head(sub).fence == fence)
+            let ns = "a\n" + line as NSString
+            #expect(MathExtractor.openFence(in: ns, range: NSRange(location: 2, length: ns.length - 2)) == fence, "\(line.debugDescription)")
         }
         #expect(MathExtractor.extract("\u{00A0}$$\nx\n $$\u{3000}\n").1 == [MathExtractor.Formula(tex: "x", display: true)])
-        #expect(MathExtractor.openFence(after: "\u{00A0}~~~\n") == "~~~")
+        #expect(MathExtractor.openFence(in: "\u{00A0}~~~\n" as NSString, range: NSRange(location: 0, length: 5)) == "~~~")
     }
 
     @Test func symbolsAndStructures() {

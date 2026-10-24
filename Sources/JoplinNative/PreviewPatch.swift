@@ -36,22 +36,32 @@ extension MarkdownPreview.Coordinator {
         let x = a as NSString, y = b as NSString
         let xl = x.length, yl = y.length, n = min(xl, yl)
         let chunk = 16_384
-        var p = [unichar](repeating: 0, count: chunk), q = [unichar](repeating: 0, count: chunk)
+        let p = UnsafeMutablePointer<unichar>.allocate(capacity: chunk), q = UnsafeMutablePointer<unichar>.allocate(capacity: chunk)
+        defer {
+            p.deallocate()
+            q.deallocate()
+        }
+        let direct = (CFStringGetCharactersPtr(x as CFString), CFStringGetCharactersPtr(y as CFString))
+        func units(_ s: NSString, _ fast: UnsafePointer<unichar>?, _ range: NSRange, _ buffer: UnsafeMutablePointer<unichar>) -> UnsafePointer<unichar> {
+            if let fast { return fast + range.location }
+            s.getCharacters(buffer, range: range)
+            return UnsafePointer(buffer)
+        }
         func same(fromEnd: Bool) -> Int {
             var done = 0
             while done < n {
                 let count = min(chunk, n - done)
-                x.getCharacters(&p, range: NSRange(location: fromEnd ? xl - done - count : done, length: count))
-                y.getCharacters(&q, range: NSRange(location: fromEnd ? yl - done - count : done, length: count))
-                if memcmp(p, q, count * 2) == 0 {
+                let u = units(x, direct.0, NSRange(location: fromEnd ? xl - done - count : done, length: count), p)
+                let v = units(y, direct.1, NSRange(location: fromEnd ? yl - done - count : done, length: count), q)
+                if memcmp(u, v, count * 2) == 0 {
                     done += count
                     continue
                 }
                 var i = 0
                 if fromEnd {
-                    while p[count - 1 - i] == q[count - 1 - i] { i += 1 }
+                    while u[count - 1 - i] == v[count - 1 - i] { i += 1 }
                 } else {
-                    while p[i] == q[i] { i += 1 }
+                    while u[i] == v[i] { i += 1 }
                 }
                 return done + i
             }
@@ -84,18 +94,17 @@ extension MarkdownPreview.Coordinator {
         let start = before.map { o[$0].source.location } ?? 0
         let end = after.map { o[$0].source.upperBound + delta } ?? change.newLength
         guard end - start <= backgroundLength else { return nil }
-        func part(_ text: String, _ from: Int, _ to: Int) -> String {
-            let i = text.utf16.index(text.startIndex, offsetBy: from)
-            return String(text[i..<text.utf16.index(i, offsetBy: to - from)])
-        }
-        let source = part(markdown, start, end), removed = part(old.markdown, change.start, change.oldEnd)
-        let hasDollar = old.hasDollar || source.utf8.contains(36)
-        guard !source.contains("$$"), !removed.contains("$$"), !source.contains(MathExtractor.open),
+        let new = markdown as NSString, previous = old.markdown as NSString
+        let source = new.substring(with: NSRange(location: start, length: end - start))
+        let removed = previous.substring(with: NSRange(location: change.start, length: change.oldEnd - change.start))
+        let hasDollar = old.hasDollar || source.quickContains("$")
+        guard !source.quickContains("$$"), !removed.quickContains("$$"), !source.quickContains(MathExtractor.openMark),
               !hasReferenceDefinition(source) else { return nil }
         if hasDollar {
-            let replaced = part(old.markdown, start, after.map { o[$0].source.upperBound } ?? (old.markdown as NSString).length)
-            guard MathExtractor.openFence(after: part(markdown, 0, start)) == nil,
-                  MathExtractor.openFence(after: source) == MathExtractor.openFence(after: replaced) else { return nil }
+            let replaced = NSRange(location: start, length: (after.map { o[$0].source.upperBound } ?? previous.length) - start)
+            guard MathExtractor.openFence(in: new, range: NSRange(location: 0, length: start)) == nil,
+                  MathExtractor.openFence(in: new, range: NSRange(location: start, length: end - start))
+                    == MathExtractor.openFence(in: previous, range: replaced) else { return nil }
         }
         var counts: [String: Int] = [:]
         for base in old.headingBases[..<o[..<(before ?? 0)].reduce(0, { $0 + $1.headings })] { counts[base, default: 0] += 1 }

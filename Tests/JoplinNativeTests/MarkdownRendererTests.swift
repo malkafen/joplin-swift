@@ -347,10 +347,15 @@ import Testing
         #expect(render("```\n```swift\nlet a = $x$\n```").string.contains("let a = $x$"))
         let titled = MarkdownRenderer(baseSize: 14) { _ in nil }.renderDocument("$a$ and $b$\n\n# Area $b^2$")
         #expect(titled.headings == ["area-b2"])
-        #expect(MathExtractor.openFence(after: "text\n```swift\n$x$\n") == "```")
-        #expect(MathExtractor.openFence(after: "~~~\n$$\n```\n$$\n", from: nil) == "~~~")
-        #expect(MathExtractor.openFence(after: "$$\n```\n$$\nx", from: nil) == nil)
-        #expect(MathExtractor.openFence(after: "```\n", from: "```") == nil)
+        func openFence(_ text: String) -> String? {
+            MathExtractor.openFence(in: text as NSString, range: NSRange(location: 0, length: (text as NSString).length))
+        }
+        #expect(openFence("text\n```swift\n$x$\n") == "```")
+        #expect(openFence("~~~\n$$\n```\n$$\n") == "~~~")
+        #expect(openFence("$$\n```\n$$\nx") == nil)
+        #expect(openFence("```\n```\n") == nil)
+        #expect(openFence("") == nil)
+        #expect(MathExtractor.openFence(in: "x\n```\ny" as NSString, range: NSRange(location: 2, length: 4)) == "```")
     }
 
     @Test func respectsBaseSize() throws {
