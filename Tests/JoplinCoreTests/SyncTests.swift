@@ -10,6 +10,10 @@ import Testing
         try JoplinServerClient(baseURL: "http://joplin.test:22300/", email: "user@example.com", password: password, transport: server)
     }
 
+    func ledger(_ store: Store) throws -> SyncLedger {
+        try store.syncLedger(identity: try client().targetIdentity)
+    }
+
     func engine(_ store: Store) throws -> SyncEngine {
         SyncEngine(store: store, client: try client())
     }
@@ -63,6 +67,7 @@ import Testing
         for (i, id) in ids.enumerated() { #expect(b.note(id: id)?.body == "body \(i)") }
         #expect(try await sync(b) == SyncReport())
 
+        #expect(try await engine(b).fetch(ids.map { "\($0).md" }).count == ids.count)
         let names = [ids[0], ids[1], String(repeating: "f", count: 32)].map { "\($0).md" }
         let contents = try await engine(b).fetch(names)
         #expect(contents.count == 3)
@@ -87,7 +92,7 @@ import Testing
         #expect(Set(b.tags(forNote: note.id).map(\.title)) == ["x", "y"])
         let local = try #require(b.resource(id: res.id))
         #expect(try Data(contentsOf: b.url(for: local)) == Data([1, 2, 3]))
-        #expect(!b.isDirty(id: note.id))
+        #expect(!(try ledger(b)).isDirty(id: note.id))
 
         var edited = try #require(b.note(id: note.id))
         edited.body = "Changed on B"
@@ -119,7 +124,7 @@ import Testing
         #expect(report.deletedRemotely == 3)
         #expect(server.file("\(note.id).md") == nil)
         #expect(server.file(".resource/\(res.id)") == nil)
-        #expect(try a.pendingDeletions().isEmpty)
+        #expect(try ledger(a).pendingDeletions().isEmpty)
 
         let localFile = b.url(for: try #require(b.resource(id: res.id)))
         let pulled = try await sync(b)
@@ -127,7 +132,7 @@ import Testing
         #expect(b.note(id: note.id) == nil)
         #expect(b.resource(id: res.id) == nil)
         #expect(!FileManager.default.fileExists(atPath: localFile.path))
-        #expect(try b.pendingDeletions().isEmpty, "remote deletions are not echoed back")
+        #expect(try ledger(b).pendingDeletions().isEmpty, "remote deletions are not echoed back")
     }
 
     @Test func conflictingNoteEditsKeepBothVersions() async throws {
@@ -185,7 +190,7 @@ import Testing
         try await sync(a)
         let report = try await sync(b)
         #expect(report.downloaded == 0)
-        #expect(!b.isDirty(id: note.id))
+        #expect(!(try ledger(b)).isDirty(id: note.id))
     }
 
     @Test func newerLocalChangeWinsForNonNotes() async throws {
@@ -272,8 +277,8 @@ import Testing
         #expect(report.downloaded == 3)
         #expect(store.note(id: noteId)?.parentId == folderId)
         #expect(store.resource(id: resId)?.title == "no blob")
-        #expect(store.syncTime(id: noteId) == 1_700_000_000_000)
-        #expect(try store.itemsToUpload().isEmpty)
+        #expect(try ledger(store).syncTime(id: noteId) == 1_700_000_000_000)
+        #expect(try ledger(store).itemsToUpload().isEmpty)
     }
 
     @Test func pagedDeltaAndInvalidCursor() async throws {
@@ -284,9 +289,10 @@ import Testing
         try await sync(a)
         server.pageSize = 2
         #expect(try await sync(b).downloaded == 6)
-        #expect(b.setting(SyncEngine.cursorKey) == String(server.changes.count))
+        #expect(try ledger(b).cursor == String(server.changes.count))
+        #expect(server.lastDeltaLimit == JoplinServerClient.deltaPageSize)
 
-        b.setSetting(SyncEngine.cursorKey, "999999")
+        try ledger(b).saveCursor("999999")
         try edit(a, .note, try #require(a.notes(filter: .all, sort: .title).first).id, "body", "new")
         try await sync(a)
         let report = try await sync(b)
@@ -313,6 +319,8 @@ import Testing
         server.seed("info.json", "garbage")
         await #expect(throws: SyncError.invalidResponse("info.json is not valid JSON")) { try await sync(store) }
         server.seed("info.json", #"{"version":3,"e2ee":{"value":false}}"#)
+        try await sync(store)
+        server.seed("info.json", "{}")
         try await sync(store)
     }
 
@@ -347,6 +355,20 @@ import Testing
         await #expect(throws: SyncError.invalidResponse("no session id")) { try await client.login() }
         broken.sessionBody = #"{"id":"s"}"#
         await #expect(throws: SyncError.invalidResponse("delta is not JSON")) { _ = try await client.delta(cursor: "") }
+        broken.body = "{}"
+        #expect(try await client.delta(cursor: "").items.isEmpty)
+        broken.body = #"{"items":[{"item_name":"x"},{"item_name":"y","type":9}]}"#
+        let page = try await client.delta(cursor: "c1")
+        #expect(page.items.isEmpty)
+        #expect(page.cursor == "c1")
+        #expect(!page.hasMore)
+        broken.body = "Bad gateway"
+        broken.status = 502
+        await #expect(throws: SyncError.http(status: 502, code: "", message: "Bad gateway")) { _ = try await client.get("info.json") }
+        broken.status = 200
+        broken.body = "content"
+        #expect(try await client.get("a b") == Data("content".utf8))
+        #expect(broken.lastURL?.absoluteString == "https://joplin.test/api/items/root:/a%20b:/content")
     }
 
     @Test func clientValidation() throws {
@@ -388,15 +410,27 @@ import Testing
         let (data, response) = try await transport.send(URLRequest(url: URL(string: "https://stub.test/ping")!))
         #expect(response.statusCode == 200)
         #expect(String(data: data, encoding: .utf8) == "pong")
+        await #expect(throws: SyncError.invalidResponse("not an HTTP response")) {
+            _ = try await transport.send(URLRequest(url: URL(string: "https://stub.test/plain")!))
+        }
+        let session = URLSessionTransport.makeSession(connections: 3)
+        #expect(session.configuration.httpMaximumConnectionsPerHost == 3)
+        #expect(session.configuration.urlCache == nil)
+        #expect(URLSessionTransport().session.configuration.httpMaximumConnectionsPerHost == SyncEngine.parallelDownloads)
     }
 }
 
 final class BrokenTransport: HTTPTransport, @unchecked Sendable {
     var sessionBody = "{}"
+    var body = "<html>"
+    var status = 200
+    var lastURL: URL?
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        let body = request.url!.path.hasSuffix("/api/sessions") ? sessionBody : "<html>"
-        return (Data(body.utf8), HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        lastURL = request.url
+        let session = request.url!.path.hasSuffix("/api/sessions")
+        return (Data((session ? sessionBody : body).utf8),
+                HTTPURLResponse(url: request.url!, statusCode: session ? 200 : status, httpVersion: nil, headerFields: nil)!)
     }
 }
 
@@ -404,7 +438,9 @@ final class StubURLProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
-        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
+        let response: URLResponse = request.url!.path == "/plain"
+            ? URLResponse(url: request.url!, mimeType: "text/plain", expectedContentLength: 4, textEncodingName: nil)
+            : HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: Data("pong".utf8))
         client?.urlProtocolDidFinishLoading(self)

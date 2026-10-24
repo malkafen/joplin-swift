@@ -73,7 +73,7 @@ import Testing
         try write(fixtureId(6), "MK\n\nid: \(fixtureId(6))\ntype_: 9")
         try write(fixtureId(7), "garbage without properties")
         try write(withBlob, "pic.jpg\n\nid: \(withBlob)\nmime: image/jpeg\nfile_extension: jpg\ntype_: 4")
-        try write(noBlob, "missing\n\nid: \(noBlob)\nfile_extension: \ntype_: 4")
+        try write(noBlob, "missing\n\nid: \(noBlob)\ntype_: 4")
         try Data([9]).write(to: blobs.appendingPathComponent(withBlob))
         try "ignored".write(to: dir.appendingPathComponent("info.json"), atomically: true, encoding: .utf8)
         try "ignored".write(to: dir.appendingPathComponent("short.md"), atomically: true, encoding: .utf8)

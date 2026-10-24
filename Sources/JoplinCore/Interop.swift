@@ -182,7 +182,7 @@ public extension Store {
         try p.run()
         p.waitUntilExit()
         if p.terminationStatus != 0 {
-            let msg = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             throw InteropError.tarFailed(msg)
         }
     }

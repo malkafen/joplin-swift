@@ -32,8 +32,18 @@ public protocol HTTPTransport: Sendable {
 public struct URLSessionTransport: HTTPTransport {
     let session: URLSession
 
-    public init(session: URLSession = .shared) {
+    public init(session: URLSession = URLSessionTransport.makeSession()) {
         self.session = session
+    }
+
+    public static let defaultConnections = 32
+
+    public static func makeSession(connections: Int = defaultConnections) -> URLSession {
+        let configuration = URLSessionConfiguration.default
+        configuration.httpMaximumConnectionsPerHost = connections
+        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
+        configuration.urlCache = nil
+        return URLSession(configuration: configuration)
     }
 
     public func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
@@ -58,48 +68,59 @@ public struct DeltaPage: Sendable {
 
 public final class JoplinServerClient: @unchecked Sendable {
     public let baseURL: URL
+    public let targetIdentity: String
     let email: String
     let password: String
     let transport: HTTPTransport
     private let sessionLock = NSLock()
     private var currentSession: String?
+    private var batchEndpoint = true
     private(set) var sessionId: String? {
         get { sessionLock.withLock { currentSession } }
         set { sessionLock.withLock { currentSession = newValue } }
+    }
+    private(set) var supportsBatchUpload: Bool {
+        get { sessionLock.withLock { batchEndpoint } }
+        set { sessionLock.withLock { batchEndpoint = newValue } }
     }
 
     public init(baseURL: String, email: String, password: String, transport: HTTPTransport = URLSessionTransport()) throws {
         var trimmed = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         while trimmed.hasSuffix("/") { trimmed.removeLast() }
         guard let url = URL(string: trimmed), let scheme = url.scheme?.lowercased(), ["http", "https"].contains(scheme),
-              url.host?.isEmpty == false else {
+              let host = url.host, !host.isEmpty else {
             throw SyncError.invalidURL(baseURL)
         }
         self.baseURL = url
         self.email = email
         self.password = password
         self.transport = transport
+        let defaultPort = scheme == "http" ? 80 : 443
+        let port = url.port.flatMap { $0 == defaultPort ? nil : ":\($0)" } ?? ""
+        var path = url.path
+        while path.hasSuffix("/") { path.removeLast() }
+        targetIdentity = "\(scheme)://\(host.lowercased())\(port)\(path) \(email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())"
     }
+
+    static let deltaPageSize = 1000
 
     static func itemPath(_ name: String) -> String { "api/items/root:/\(name):" }
 
-    private func url(_ path: String, query: [URLQueryItem]) throws -> URL {
-        guard var components = URLComponents(string: baseURL.absoluteString + "/" + path) else {
-            throw SyncError.invalidURL(path)
-        }
+    private func url(_ path: String, query: [URLQueryItem]) -> URL {
+        var components = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
+        components.path += "/" + path
         if !query.isEmpty { components.queryItems = query }
-        guard let url = components.url else { throw SyncError.invalidURL(path) }
-        return url
+        return components.url!
     }
 
     private static func errorInfo(_ data: Data) -> (code: String, message: String) {
         let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-        let message = obj?["error"] as? String ?? String(data: data, encoding: .utf8) ?? ""
+        let message = obj?["error"] as? String ?? String(decoding: data, as: UTF8.self)
         return (obj?["code"] as? String ?? "", message)
     }
 
     public func login() async throws {
-        var request = URLRequest(url: try url("api/sessions", query: []))
+        var request = URLRequest(url: url("api/sessions", query: []))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: ["email": email, "password": password])
@@ -115,17 +136,16 @@ public final class JoplinServerClient: @unchecked Sendable {
 
     @discardableResult
     func request(_ method: String, _ path: String, query: [URLQueryItem] = [], body: Data? = nil,
-                 allowNotFound: Bool = false) async throws -> (data: Data, status: Int) {
+                 contentType: String = "application/octet-stream", allowNotFound: Bool = false) async throws -> (data: Data, status: Int) {
         if sessionId == nil { try await login() }
         for attempt in 0..<2 {
-            var request = URLRequest(url: try url(path, query: query))
+            var request = URLRequest(url: url(path, query: query))
             request.httpMethod = method
             request.setValue(sessionId, forHTTPHeaderField: "X-API-AUTH")
             request.setValue("2.6.0", forHTTPHeaderField: "X-API-MIN-VERSION")
             if let body {
                 request.httpBody = body
-                request.setValue(path.hasPrefix("api/locks") ? "application/json" : "application/octet-stream",
-                                 forHTTPHeaderField: "Content-Type")
+                request.setValue(contentType, forHTTPHeaderField: "Content-Type")
             }
             let (data, response) = try await transport.send(request)
             let status = response.statusCode
@@ -149,12 +169,48 @@ public final class JoplinServerClient: @unchecked Sendable {
         try await request("PUT", Self.itemPath(name) + "/content", body: data)
     }
 
+    public func putBatch(_ items: [(name: String, data: Data)]) async throws -> [String: String] {
+        if supportsBatchUpload, items.count > 1 {
+            let payload = ["items": items.map { ["name": $0.name, "body": String(decoding: $0.data, as: UTF8.self)] }]
+            let body = try JSONSerialization.data(withJSONObject: payload)
+            do {
+                let (data, _) = try await request("PUT", "api/batch_items", body: body, contentType: "application/json")
+                return try Self.batchFailures(data, names: items.map(\.name))
+            } catch SyncError.http(404, _, _) {
+                supportsBatchUpload = false
+            }
+        }
+        for item in items { try await put(item.name, item.data) }
+        return [:]
+    }
+
+    static func batchFailures(_ data: Data, names: [String]) throws -> [String: String] {
+        guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let results = obj["items"] as? [String: Any] else {
+            throw SyncError.invalidResponse("batch upload response is not JSON")
+        }
+        var failures: [String: String] = [:]
+        for name in names {
+            guard let result = results[name] as? [String: Any] else {
+                failures[name] = "missing from the batch response"
+                continue
+            }
+            switch result["error"] {
+            case nil, is NSNull: continue
+            case let error as [String: Any]: failures[name] = error["message"] as? String ?? "\(error)"
+            case let error?: failures[name] = "\(error)"
+            }
+        }
+        return failures
+    }
+
     public func delete(_ name: String) async throws {
         try await request("DELETE", Self.itemPath(name), allowNotFound: true)
     }
 
     public func delta(cursor: String) async throws -> DeltaPage {
-        let query = cursor.isEmpty ? [] : [URLQueryItem(name: "cursor", value: cursor)]
+        var query = [URLQueryItem(name: "limit", value: String(Self.deltaPageSize))]
+        if !cursor.isEmpty { query.append(URLQueryItem(name: "cursor", value: cursor)) }
         let (data, _) = try await request("GET", Self.itemPath("") + "/delta", query: query)
         guard let obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
             throw SyncError.invalidResponse("delta is not JSON")
@@ -171,7 +227,7 @@ public final class JoplinServerClient: @unchecked Sendable {
     public func acquireSyncLock(clientId: String) async throws {
         let body = try JSONSerialization.data(withJSONObject: ["type": 1, "clientType": 1, "clientId": clientId])
         do {
-            try await request("POST", "api/locks", body: body)
+            try await request("POST", "api/locks", body: body, contentType: "application/json")
         } catch SyncError.http(_, let code, let message) where !code.isEmpty {
             throw SyncError.locked(message)
         }
