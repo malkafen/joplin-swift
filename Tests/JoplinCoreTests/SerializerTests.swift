@@ -2,7 +2,6 @@ import Foundation
 import Testing
 @testable import JoplinCore
 
-// Captured from Joplin Desktop (BaseItem.serialize output).
 private let joplinNote = """
 My note
 

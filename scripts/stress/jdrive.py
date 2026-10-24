@@ -69,7 +69,6 @@ class Joplin:
         time.sleep(settle)
         since = (time.time() - self.t0) * 1000 + 50
         m = self.js(f"[window.__p.freeze({since}), window.__p.settled({since})]")
-        # A hidden viewer paints no frames, so it only counts while it is visible.
         visible = self.js("!!document.querySelector('.noteTextViewer')?.offsetParent")
         try: v = self.vjs(f"[window.__p.freeze({since}), window.__p.settled({since})]") if visible else [0, 0]
         except Exception: v = [0, 0]

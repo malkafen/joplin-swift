@@ -1,7 +1,5 @@
 import AppKit
 
-/// A font family chosen in Settings. The system designs are stored as reserved names starting with a dot, any
-/// other value is the family name of an installed font.
 struct FontFamily: Hashable, Identifiable {
     let name: String
 
@@ -33,7 +31,6 @@ struct FontFamily: Hashable, Identifiable {
         return font(size: 12).isFixedPitch
     }
 
-    /// Installed families, for the font pickers. The system designs come first and are not repeated.
     static var installed: [FontFamily] {
         NSFontManager.shared.availableFontFamilies
             .filter { !$0.hasPrefix(".") }
@@ -66,7 +63,6 @@ struct FontFamily: Hashable, Identifiable {
     }
 }
 
-/// Fonts used to draw a note, resolved from the Settings.
 struct Typography: Equatable {
     var family: FontFamily = .system
     var size: CGFloat = 14
@@ -77,22 +73,17 @@ struct Typography: Equatable {
     }
 
     func code(weight: NSFont.Weight = .regular, italic: Bool = false, scale: CGFloat = 1) -> NSFont {
-        // Monospaced fonts look larger than proportional ones at the same point size.
         let factor: CGFloat = family.isMonospaced ? 1 : 0.9
         return codeFamily.font(size: size * scale * factor, weight: weight, italic: italic)
     }
 
-    /// Comfortable reading measure (about 75 characters of body text).
     var readableWidth: CGFloat { (size * 46).rounded() }
 }
 
-/// Finding and marking the words of a search in text.
 enum SearchHighlight {
     static var color: NSColor { NSColor.systemYellow.withAlphaComponent(0.45) }
-    /// The match stepped to.
     static var currentColor: NSColor { NSColor.systemOrange.withAlphaComponent(0.75) }
 
-    /// Search words without quotes; FTS matches prefixes, so these are matched as substrings.
     static func terms(_ text: String) -> [String] {
         let words = text.split(whereSeparator: { $0.isWhitespace })
             .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'*")) }
@@ -101,7 +92,6 @@ enum SearchHighlight {
         return words.filter { seen.insert($0.lowercased()).inserted }
     }
 
-    /// Ranges of all terms in `string`, ignoring case and diacritics, in text order.
     static func ranges(of terms: [String], in string: String, range: NSRange? = nil, limit: Int = .max) -> [NSRange] {
         ranges(of: terms, in: string as NSString, range: range, limit: limit)
     }

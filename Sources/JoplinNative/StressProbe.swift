@@ -1,9 +1,5 @@
 import AppKit
 
-/// Debug aid: JN_STRESS_LOG=/path.json runs the stress scenario of `scripts/stress` (the same steps `jbench.py` drives
-/// in Joplin Desktop), writes the measures there and quits. `ready` is ms until the expected result is on screen,
-/// `freeze` the longest main-thread run loop pass, `settled` when the last pass over 100 ms ended and `at` the Unix time
-/// of the log (`sample.py` measures CPU and memory between them).
 @MainActor
 enum StressProbe {
     static var segments: [(start: Double, end: Double)] = []
@@ -14,7 +10,6 @@ enum StressProbe {
     static func start(model: AppModel) {
         let env = ProcessInfo.processInfo.environment
         guard let log = env["JN_STRESS_LOG"] else { return }
-        // Order after Core Animation's commit, so a pass includes drawing.
         let begin = CFRunLoopObserverCreateWithHandler(nil, CFRunLoopActivity.afterWaiting.rawValue, true, -3_000_000) { _, _ in
             passStart = CFAbsoluteTimeGetCurrent()
         }
@@ -45,7 +40,6 @@ enum StressProbe {
     }
     static var settled = 0
 
-    /// Longest pass since the mark, after letting the UI settle; also stores `settled`, when the last pass over 100 ms ended.
     static func freeze(_ settle: Double = 0.5) async -> Int {
         await sleep(settle)
         let from = t0 - 0.05
@@ -60,7 +54,6 @@ enum StressProbe {
         if let d = try? JSONSerialization.data(withJSONObject: kw), let s = String(data: d, encoding: .utf8) { print(s) }
     }
 
-    /// Physical footprint in MB, what Activity Monitor shows as Memory.
     static func memory() -> Int {
         var info = task_vm_info_data_t()
         var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
@@ -70,11 +63,9 @@ enum StressProbe {
 
     static func r(_ v: Double?) -> Any { v.map { Int($0.rounded()) } ?? NSNull() }
 
-
     static func run(model: AppModel, env: [String: String]) async {
         let launchedAt = Double(env["JN_STRESS_T0"] ?? "") ?? 0
         t0 = CFAbsoluteTimeGetCurrent()
-        // The app starts with nothing chosen; the launch is measured up to the list of all notes, like Joplin's.
         if model.sidebarSelection == nil { model.sidebarSelection = .allNotes }
         _ = await until { !model.notes.isEmpty && model.searchStepper.editor?.window?.isVisible == true }
         log("launch", ["ready": Int((Date().timeIntervalSince1970 - launchedAt) * 1000), "start": launchedAt])
@@ -105,9 +96,7 @@ enum StressProbe {
             await sleep(1.5)
         }
 
-        // JN_STRESS_ONLY runs one huge note ("Huge 5 MB") or the search only.
         let only = env["JN_STRESS_ONLY"] ?? ""
-        // 1. Switching between ordinary notes in the editor.
         model.layout = .editor
         await folder("Notebook 00")
         let ids = model.notes.dropFirst().prefix(20).map(\.id)
@@ -120,7 +109,6 @@ enum StressProbe {
         let sorted = times.sorted()
         if only.isEmpty { log("switch_notes", ["n": times.count, "median": r(sorted[sorted.count / 2]), "max": r(sorted.last), "freeze_max": freezes.max() ?? 0]) }
 
-        // 2. Huge notes.
         await folder("Huge")
         for name in ["Huge 1 MB", "Huge 5 MB", "Huge 20 MB"] where only.isEmpty || only == name {
             guard let id = model.notes.first(where: { $0.title == name })?.id else { continue }
@@ -146,13 +134,11 @@ enum StressProbe {
                 let s = CFAbsoluteTimeGetCurrent()
                 lastKey = now()
                 editor.insertText(String(ch), replacementRange: editor.selectedRange())
-                // Until the run loop pass that handles the key (and draws) ends.
                 let n = segments.count
                 _ = await until { segments.count > n || CFAbsoluteTimeGetCurrent() - s > 0.004 }
                 lat.append(((segments.last.map { $0.end > s ? $0.end : CFAbsoluteTimeGetCurrent() } ?? CFAbsoluteTimeGetCurrent()) - s) * 1000)
                 await sleep(0.25)
             }
-            // From the last key, as jbench.py does.
             let up = await until { previewTail(typed) }
             let ls = lat.sorted()
             log("typing_split", ["note": name, "key_median": r(ls[ls.count / 2]), "key_max": r(ls.last),
@@ -162,7 +148,6 @@ enum StressProbe {
             log("to_editor", ["note": name, "ready": r(await layout(.editor)), "freeze": await freeze(), "settled": settled])
         }
 
-        // 3. Opening a huge note straight in split, coming from another one.
         model.layout = .split
         func id(_ title: String) -> String? { model.notes.first { $0.title == title }?.id }
         for (prev, name) in [("Huge 20 MB", "Huge 1 MB"), ("Huge 1 MB", "Huge 5 MB"), ("Huge 5 MB", "Huge 20 MB")] where only.isEmpty || only == name {
@@ -179,7 +164,6 @@ enum StressProbe {
     }
 
     static func searchStep(model: AppModel, env: [String: String], previewTail: (String) -> Bool) async {
-        // 4. Global search typed letter by letter while the 5 MB note is open in split.
         if let f = model.folders.first(where: { $0.title == "Huge" }) { model.sidebarSelection = .folder(f.id) }
         await sleep(1.5)
         model.layout = .split

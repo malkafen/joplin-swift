@@ -42,7 +42,6 @@ import Testing
         try a.setTags(noteId: outside.id, titles: ["dropped"])
 
         let jex = temporaryDirectory().appendingPathComponent("root.jex")
-        // 2 folders + 1 note + 1 tag + 1 link + 2 resources
         #expect(try a.exportJEX(to: jex, folderId: root.id) == 7)
 
         let b = try makeStore()
@@ -74,7 +73,7 @@ import Testing
         try write(fixtureId(6), "MK\n\nid: \(fixtureId(6))\ntype_: 9")
         try write(fixtureId(7), "garbage without properties")
         try write(withBlob, "pic.jpg\n\nid: \(withBlob)\nmime: image/jpeg\nfile_extension: jpg\ntype_: 4")
-        try write(noBlob, "missing\n\nid: \(noBlob)\nfile_extension: \ntype_: 4")
+        try write(noBlob, "missing\n\nid: \(noBlob)\ntype_: 4")
         try Data([9]).write(to: blobs.appendingPathComponent(withBlob))
         try "ignored".write(to: dir.appendingPathComponent("info.json"), atomically: true, encoding: .utf8)
         try "ignored".write(to: dir.appendingPathComponent("short.md"), atomically: true, encoding: .utf8)
@@ -88,7 +87,6 @@ import Testing
         let resource = try #require(store.resource(id: withBlob))
         #expect(try Data(contentsOf: store.url(for: resource)) == Data([9]))
 
-        // Re-importing overwrites existing blobs instead of failing.
         #expect(try store.importDirectory(dir).resources == 2)
     }
 
@@ -104,7 +102,6 @@ import Testing
     }
 
     @Test func importJoplinDesktopProfile() throws {
-        // A Joplin Desktop profile has the same tables, plus columns this app does not know about.
         let profile = temporaryDirectory()
         let source = try Store(directory: profile)
         try source.db.exec("ALTER TABLE notes ADD COLUMN future_column TEXT")
@@ -115,7 +112,6 @@ import Testing
         let gone = try source.addResource(data: Data(), filename: "g.txt", mime: "text/plain", fileExtension: "txt")
         try FileManager.default.removeItem(at: source.url(for: gone))
         try source.upsert(.note, ["id": fixtureId(1), "parent_id": folder.id, "encryption_applied": 1])
-        // Older profiles: fewer columns and NULLs.
         let tag = try #require(source.tags().first)
         try source.db.exec("""
             DROP TABLE tags;

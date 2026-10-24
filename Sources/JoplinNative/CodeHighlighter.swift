@@ -1,7 +1,5 @@
 import AppKit
 
-/// Small tokenizer-based syntax highlighting for fenced code, with Xcode-like system colours that follow the
-/// appearance. It knows comments, strings, numbers, keywords, types and calls for the common languages.
 struct CodeHighlighter {
     enum Token: Equatable {
         case comment, string, number, keyword, type, call, tag, attribute, property
@@ -32,7 +30,6 @@ struct CodeHighlighter {
         }
     }
 
-    /// Normalized language name, or nil when the fence has no known language.
     static func grammar(for language: String?) -> Grammar? {
         guard let raw = language?.split(separator: " ").first?.lowercased(), !raw.isEmpty else { return nil }
         let lang = aliases[raw] ?? raw
@@ -177,7 +174,6 @@ struct CodeHighlighter {
         return g
     }()
 
-    /// Token ranges (UTF-16) of `code` for the given grammar.
     static func tokens(_ code: String, grammar g: Grammar) -> [(NSRange, Token)] {
         let chars = Array(code.utf16)
         var result: [(NSRange, Token)] = []
@@ -234,7 +230,6 @@ struct CodeHighlighter {
                     j += 1
                 }
                 j = min(j, n)
-                // A string followed by ":" is a key in JSON / YAML style languages.
                 var k = j
                 while k < n, chars[k] == 32 { k += 1 }
                 let token: Token = g.properties && k < n && chars[k] == 58 ? .property : .string
@@ -284,8 +279,8 @@ struct CodeHighlighter {
         let n = chars.count
         var i = 0
         while i < n {
-            guard chars[i] == 60 else { i += 1; continue } // <
-            if i + 3 < n, chars[i + 1] == 33, chars[i + 2] == 45, chars[i + 3] == 45 { // <!--
+            guard chars[i] == 60 else { i += 1; continue }
+            if i + 3 < n, chars[i + 1] == 33, chars[i + 2] == 45, chars[i + 3] == 45 {
                 var j = i + 4
                 while j + 2 < n, !(chars[j] == 45 && chars[j + 1] == 45 && chars[j + 2] == 62) { j += 1 }
                 j = min(n, j + 3)
@@ -320,7 +315,6 @@ struct CodeHighlighter {
         return result
     }
 
-    /// Colours `range` of `storage`, which holds `code` starting at `range.location`.
     static func apply(language: String?, to storage: NSMutableAttributedString, range: NSRange) {
         guard let grammar = grammar(for: language), range.length > 0 else { return }
         let code = (storage.string as NSString).substring(with: range)

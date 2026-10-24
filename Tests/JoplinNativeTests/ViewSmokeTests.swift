@@ -5,8 +5,6 @@ import SwiftUI
 import Testing
 @testable import JoplinNative
 
-/// Renders the real SwiftUI hierarchy off-screen in every major state. This does not click anything; it catches
-/// crashes and layout-time assertions and exercises the AppKit bridges (editor, preview, token field).
 @MainActor
 @Suite(.serialized) struct ViewSmokeTests {
     private func render<V: View>(_ view: V, size: CGSize = CGSize(width: 1200, height: 760)) -> NSView {
@@ -69,7 +67,7 @@ import Testing
     @Test func emptyStates() throws {
         let h = try ModelHarness(welcome: false)
         let model = h.model
-        _ = render(ContentView().environment(model)) // no notes at all
+        _ = render(ContentView().environment(model))
         model.sidebarSelection = .trash
         _ = render(ContentView().environment(model))
         model.sidebarSelection = .allNotes
@@ -117,11 +115,9 @@ import Testing
         pump()
         let tv = try #require(model.editor.textView)
 
-        // Typing in the editor reaches the model.
         tv.insertText("typed ", replacementRange: NSRange(location: 0, length: 0))
         #expect(model.currentNote?.body.hasPrefix("typed ") == true)
 
-        // Changes made elsewhere (checkbox in the preview) reach the editor.
         let line = try #require(model.currentNote?.body.components(separatedBy: "\n").firstIndex { $0.contains("[ ]") })
         model.toggleCheckbox(line: line + 1)
         pump()
@@ -189,7 +185,6 @@ import Testing
         #expect(coordinator.textView(tv, clickedOnLink: URL(string: "https://a.b")!, at: 0))
         #expect(coordinator.textView(tv, clickedOnLink: "joplinitem://x", at: 0))
         #expect(!coordinator.textView(tv, clickedOnLink: 42, at: 0))
-        // Anchors scroll the preview instead of opening anything.
         #expect(coordinator.textView(tv, clickedOnLink: URL(string: "#intro")!, at: 0))
         #expect(clicked.map(\.absoluteString) == ["https://a.b", "joplinitem://x"])
     }

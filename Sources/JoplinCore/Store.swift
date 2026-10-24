@@ -1,7 +1,6 @@
 import Foundation
 import UniformTypeIdentifiers
 
-/// Local note database. All access is synchronous and expected on the main thread.
 public final class Store {
     public let db: SQLiteDB
     public let directory: URL
@@ -18,18 +17,19 @@ public final class Store {
 
     public static func now() -> Int64 { Int64((Date().timeIntervalSince1970 * 1000).rounded()) }
 
-    /// Joplin ids: 32 lowercase hex chars (uuid without dashes).
     public static func newId() -> String {
         UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
     }
 
-    // MARK: - Generic item access
-
-    /// Inserts or updates an item. Missing columns get schema defaults on insert and are left untouched on update.
     public func upsert(_ type: ModelType, _ fields: [String: Any]) throws {
+        guard let id = fields["id"] as? String else { return }
+        try upsert(type, fields, isNew: !exists(type, id: id))
+    }
+
+    func upsert(_ type: ModelType, _ fields: [String: Any], isNew: Bool) throws {
         guard let table = type.table, let defs = Schema.fields[type] else { return }
         var values = fields
-        if !exists(type, id: fields["id"] as? String ?? "") {
+        if isNew {
             for def in defs where values[def.name] == nil && def.name != "id" {
                 values[def.name] = def.defaultSQLValue
             }
@@ -46,7 +46,7 @@ public final class Store {
 
     public func exists(_ type: ModelType, id: String) -> Bool {
         guard let table = type.table else { return false }
-        return ((try? db.scalarInt("SELECT COUNT(*) FROM \(table) WHERE id = ?", [id])) ?? 0) > 0
+        return intOrZero("SELECT COUNT(*) FROM \(table) WHERE id = ?", [id]) > 0
     }
 
     public func row(_ type: ModelType, id: String) -> Row? {
@@ -59,15 +59,21 @@ public final class Store {
         return try db.query("SELECT * FROM \(table) WHERE \(clause)", args)
     }
 
-    private func recordDeletion(_ type: ModelType, _ id: String) throws {
+    func recordDeletion(_ type: ModelType, _ id: String) throws {
         try db.run("INSERT INTO deleted_items (item_type, item_id, deleted_time) VALUES (?, ?, ?)", [type.rawValue, id, Store.now()])
     }
 
-    private static func placeholders(_ count: Int) -> String {
+    static func placeholders(_ count: Int) -> String {
         Array(repeating: "?", count: count).joined(separator: ", ")
     }
 
-    // MARK: - Settings
+    func rowsOrEmpty(_ sql: String, _ args: [Any?] = []) -> [Row] {
+        (try? db.query(sql, args)) ?? []
+    }
+
+    func intOrZero(_ sql: String, _ args: [Any?] = []) -> Int {
+        Int((try? db.scalarInt(sql, args)) ?? 0)
+    }
 
     public func setting(_ key: String) -> String? {
         try? db.query("SELECT value FROM settings WHERE key = ?", [key]).first?.string("value")
@@ -77,508 +83,7 @@ public final class Store {
         try? db.run("INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", [key, value])
     }
 
-    // MARK: - Folders
-
-    /// Sorted like Finder: case-insensitive, numbers by value ("Folder 2" before "Folder 10").
-    public func folders(deleted: Bool = false) -> [Folder] {
-        let clause = deleted ? "deleted_time > 0" : "deleted_time = 0 AND encryption_applied = 0"
-        let rows = (try? db.query("SELECT * FROM folders WHERE \(clause)")) ?? []
-        return rows.map(Folder.init(row:)).sorted { $0.title.localizedStandardCompare($1.title) == .orderedAscending }
-    }
-
-    public func folder(id: String) -> Folder? {
-        row(.folder, id: id).map(Folder.init(row:))
-    }
-
-    /// Number of non-deleted notes directly inside each folder.
-    public func noteCountsByFolder() -> [String: Int] {
-        let rows = (try? db.query("SELECT parent_id, COUNT(*) AS c FROM notes WHERE deleted_time = 0 AND is_conflict = 0 GROUP BY parent_id")) ?? []
-        var out: [String: Int] = [:]
-        for r in rows { out[r.string("parent_id")] = Int(r.int("c")) }
-        return out
-    }
-
-    @discardableResult
-    public func createFolder(title: String, parentId: String = "") throws -> Folder {
-        let now = Store.now()
-        let id = Store.newId()
-        try upsert(.folder, [
-            "id": id, "title": title, "parent_id": parentId,
-            "created_time": now, "updated_time": now, "user_created_time": now, "user_updated_time": now,
-        ])
-        return folder(id: id)!
-    }
-
-    public func renameFolder(id: String, title: String) throws {
-        let now = Store.now()
-        try db.run("UPDATE folders SET title = ?, updated_time = ?, user_updated_time = ? WHERE id = ?", [title, now, now, id])
-    }
-
-    public func moveFolder(id: String, toParent parentId: String) throws {
-        guard id != parentId, !descendantFolderIds(of: id).contains(parentId) else { return }
-        let now = Store.now()
-        try db.run("UPDATE folders SET parent_id = ?, updated_time = ?, user_updated_time = ? WHERE id = ?", [parentId, now, now, id])
-    }
-
-    public func descendantFolderIds(of id: String) -> [String] {
-        var result: [String] = []
-        var queue = [id]
-        while let current = queue.popLast() {
-            let children = ((try? db.query("SELECT id FROM folders WHERE parent_id = ?", [current])) ?? []).map { $0.string("id") }
-            result.append(contentsOf: children)
-            queue.append(contentsOf: children)
-        }
-        return result
-    }
-
-    /// Moves a folder, its sub-folders and their notes to the trash (Joplin's deleted_time).
-    public func trashFolder(id: String) throws {
-        let now = Store.now()
-        let ids = [id] + descendantFolderIds(of: id)
-        let ph = Store.placeholders(ids.count)
-        try db.transaction {
-            try db.run("UPDATE folders SET deleted_time = ?, updated_time = ? WHERE id IN (\(ph)) AND deleted_time = 0", [now, now] + ids)
-            try db.run("UPDATE notes SET deleted_time = ?, updated_time = ? WHERE parent_id IN (\(ph)) AND deleted_time = 0", [now, now] + ids)
-        }
-    }
-
-    public func restoreFolder(id: String) throws {
-        let now = Store.now()
-        let ids = [id] + descendantFolderIds(of: id)
-        let ph = Store.placeholders(ids.count)
-        try db.transaction {
-            try restoreFolderChain(startingAt: folder(id: id)?.parentId ?? "", now: now)
-            try db.run("UPDATE folders SET deleted_time = 0, updated_time = ? WHERE id IN (\(ph))", [now] + ids)
-            try db.run("UPDATE notes SET deleted_time = 0, updated_time = ? WHERE parent_id IN (\(ph))", [now] + ids)
-        }
-    }
-
-    private func restoreFolderChain(startingAt id: String, now: Int64) throws {
-        var current = id
-        var seen = Set<String>()
-        while !current.isEmpty, !seen.contains(current), let f = folder(id: current) {
-            seen.insert(current)
-            if f.deletedTime > 0 {
-                try db.run("UPDATE folders SET deleted_time = 0, updated_time = ? WHERE id = ?", [now, current])
-            }
-            current = f.parentId
-        }
-    }
-
-    public func deleteFolderPermanently(id: String) throws {
-        let ids = [id] + descendantFolderIds(of: id)
-        let ph = Store.placeholders(ids.count)
-        let noteIds = ((try? db.query("SELECT id FROM notes WHERE parent_id IN (\(ph))", ids)) ?? []).map { $0.string("id") }
-        try db.transaction {
-            try deleteNotesPermanentlyInTransaction(noteIds)
-            try db.run("DELETE FROM folders WHERE id IN (\(ph))", ids)
-            for fid in ids { try recordDeletion(.folder, fid) }
-        }
-    }
-
-    // MARK: - Notes
-
-    public func notes(filter: NoteFilter, sort: NoteSort, uncompletedTodosOnTop: Bool = true, showCompletedTodos: Bool = true) -> [NoteSummary] {
-        var clauses: [String] = []
-        var args: [Any?] = []
-        switch filter {
-        case .all:
-            clauses.append("deleted_time = 0 AND is_conflict = 0")
-        case .folder(let id):
-            clauses.append("parent_id = ? AND deleted_time = 0 AND is_conflict = 0")
-            args.append(id)
-        case .tag(let id):
-            clauses.append("id IN (SELECT note_id FROM note_tags WHERE tag_id = ?) AND deleted_time = 0")
-            args.append(id)
-        case .trash:
-            clauses.append("deleted_time > 0")
-        case .search(let text):
-            let q = Store.ftsQuery(text)
-            if q.isEmpty {
-                clauses.append("deleted_time = 0 AND is_conflict = 0")
-            } else {
-                clauses.append("rowid IN (SELECT rowid FROM notes_fts WHERE notes_fts MATCH ?) AND deleted_time = 0")
-                args.append(q)
-            }
-        }
-        if !showCompletedTodos { clauses.append("NOT (is_todo = 1 AND todo_completed > 0)") }
-        clauses.append("encryption_applied = 0")
-
-        var searchText: String?
-        if case .search(let text) = filter, !Store.ftsQuery(text).isEmpty { searchText = text }
-
-        var order: [String] = []
-        if uncompletedTodosOnTop { order.append("(is_todo = 1 AND todo_completed = 0) DESC") }
-        switch sort {
-        case .updated: order.append("user_updated_time DESC")
-        case .created: order.append("user_created_time DESC")
-        case .title: order.append("title COLLATE NOCASE ASC")
-        }
-        let sql = """
-        SELECT rowid, id, title, parent_id, is_todo, todo_completed, todo_due, user_updated_time, user_created_time, deleted_time,
-               substr(body, 1, 400) AS snippet, octet_length(body) > \(Store.longNote) AS long
-        FROM notes WHERE \(clauses.joined(separator: " AND ")) ORDER BY \(order.joined(separator: ", "))
-        """
-        let rows = (try? db.query(sql, args)) ?? []
-        var summaries = rows.map(NoteSummary.init(row:))
-        if let searchText { snippetSearchResults(&summaries, rows: rows, search: searchText) }
-        return summaries
-    }
-
-    /// Search results that get the text around the first match instead of the start of the note. snippet() is costly
-    /// per note, and with a short prefix nearly every note matches: the rest keep the start of the note.
-    static let snippetRows = 200
-
-    private func snippetSearchResults(_ summaries: inout [NoteSummary], rows: [Row], search: String) {
-        // A prefix of one or two letters matches nearly every note, and FTS5 then merges the positions of all the
-        // words it starts: the start of the note says as much.
-        let words = search.split(whereSeparator: { $0.isWhitespace })
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'*")) }
-        guard words.allSatisfy({ $0.count >= 3 }) else { return }
-        let first = rows.indices.prefix(Store.snippetRows)
-        // snippet() tokenizes the whole note, which takes seconds for a huge one: those are excerpted instead.
-        let short = first.filter { rows[$0].int("long") == 0 }
-        if !short.isEmpty {
-            let index = Dictionary(uniqueKeysWithValues: short.map { (rows[$0].int("rowid"), $0) })
-            let sql = """
-            SELECT rowid, snippet(notes_fts, 1, '', '', '…', 24) AS snippet FROM notes_fts
-            WHERE notes_fts MATCH ? AND rowid IN (\(index.keys.map(String.init).joined(separator: ",")))
-            """
-            for row in (try? db.query(sql, [Store.ftsQuery(search)])) ?? [] {
-                guard let i = index[row.int("rowid")], !row.string("snippet").isEmpty else { continue }
-                summaries[i].snippet = Snippet.make(from: row.string("snippet"))
-            }
-        }
-        for i in first where rows[i].int("long") != 0 {
-            summaries[i].snippet = Snippet.make(from: excerpt(noteId: summaries[i].id, around: search))
-        }
-    }
-
-    /// Notes longer than this (in UTF-8 bytes, which SQLite knows without reading the text) get their search snippet
-    /// from `excerpt`.
-    static let longNote = 50_000
-
-    /// The text around the first occurrence of a search word (ignoring case and diacritics, like the index).
-    func excerpt(noteId: String, around search: String) -> String {
-        let words = search.split(whereSeparator: { $0.isWhitespace })
-            .map { $0.trimmingCharacters(in: CharacterSet(charactersIn: "\"'*")) }
-            .filter { !$0.isEmpty }
-        // SQLite finds the usual spellings without turning the whole note into a string; any match will do.
-        var spellings: [String] = []
-        for w in words {
-            for s in [w, w.lowercased(), w.capitalized, w.uppercased()] where !spellings.contains(s) { spellings.append(s) }
-        }
-        for s in spellings {
-            guard let found = try? db.query("SELECT instr(body, ?) AS p FROM notes WHERE id = ?", [s, noteId]).first?.int("p"),
-                  found > 0 else { continue }
-            let start = max(1, found - 80)
-            guard let text = try? db.query("SELECT substr(body, ?, 401) AS t FROM notes WHERE id = ?", [start, noteId])
-                .first?.string("t") else { break }
-            let more = text.count > 400
-            return (start > 1 ? "…" : "") + (more ? String(text.prefix(400)) : text) + (more ? "…" : "")
-        }
-        // Other spellings (accents, mixed case) are looked for in the start of the note only.
-        guard let body = try? db.query("SELECT substr(body, 1, 200000) AS body FROM notes WHERE id = ?", [noteId])
-            .first?.string("body") else { return "" }
-        let ns = body as NSString
-        let first = words.map { ns.range(of: $0, options: [.caseInsensitive, .diacriticInsensitive]) }
-            .filter { $0.location != NSNotFound }
-            .min { $0.location < $1.location }
-        guard let first else { return ns.substring(to: min(400, ns.length)) }
-        let start = ns.rangeOfComposedCharacterSequence(at: max(0, first.location - 80)).location
-        let end = min(ns.length, start + 400)
-        let text = ns.substring(with: ns.rangeOfComposedCharacterSequences(for: NSRange(location: start, length: end - start)))
-        return (start > 0 ? "…" : "") + text + (end < ns.length ? "…" : "")
-    }
-
-    static func ftsQuery(_ text: String) -> String {
-        text.split(whereSeparator: { $0.isWhitespace })
-            .map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"*" }
-            .joined(separator: " ")
-    }
-
-    public func note(id: String) -> Note? {
-        row(.note, id: id).map(Note.init(row:))
-    }
-
-    public var totalNoteCount: Int {
-        Int((try? db.scalarInt("SELECT COUNT(*) FROM notes WHERE deleted_time = 0 AND is_conflict = 0")) ?? 0)
-    }
-
-    /// Notes listed in the trash.
-    public var trashedNoteCount: Int {
-        Int((try? db.scalarInt("SELECT COUNT(*) FROM notes WHERE deleted_time > 0 AND encryption_applied = 0")) ?? 0)
-    }
-
-    @discardableResult
-    public func createNote(parentId: String, title: String = "", body: String = "", isTodo: Bool = false) throws -> Note {
-        let now = Store.now()
-        let id = Store.newId()
-        try upsert(.note, [
-            "id": id, "parent_id": parentId, "title": title, "body": body, "is_todo": isTodo ? 1 : 0,
-            "created_time": now, "updated_time": now, "user_created_time": now, "user_updated_time": now,
-            "source_application": "io.github.malkafen.JoplinNative", "markup_language": 1,
-        ])
-        return note(id: id)!
-    }
-
-    /// Saves user-editable fields and bumps the modification times.
-    public func saveNote(_ note: Note, at time: Int64 = Store.now()) throws {
-        try Store.saveNote(note, in: db, at: time)
-    }
-
-    /// Which version of a note's body the database holds, found without reading the body.
-    public struct BodyStamp: Equatable, Sendable {
-        public var updatedTime: Int64
-        public var size: Int64
-
-        public init(updatedTime: Int64, body: String) {
-            self.updatedTime = updatedTime
-            size = Int64(body.utf8.count)
-        }
-
-        init(updatedTime: Int64, size: Int64) {
-            self.updatedTime = updatedTime
-            self.size = size
-        }
-    }
-
-    /// The note and the version of its body, from one read.
-    public func noteAndStamp(id: String) -> (note: Note, stamp: BodyStamp)? {
-        guard let row = row(.note, id: id) else { return nil }
-        let note = Note(row: row)
-        return (note, BodyStamp(updatedTime: row.int("updated_time"), body: note.body))
-    }
-
-    public func bodyStamp(id: String) -> BodyStamp? {
-        guard let row = try? db.query("SELECT updated_time, octet_length(body) AS size FROM notes WHERE id = ?", [id]).first
-        else { return nil }
-        return BodyStamp(updatedTime: row.int("updated_time"), size: row.int("size"))
-    }
-
-    /// The note with an empty body, read without it.
-    public func noteWithoutBody(id: String) -> Note? {
-        let sql = """
-            SELECT id, parent_id, title, '' AS body, is_todo, todo_completed, todo_due, source_url, author, markup_language,
-                   is_conflict, created_time, user_created_time, user_updated_time, deleted_time, encryption_applied
-            FROM notes WHERE id = ?
-            """
-        return (try? db.query(sql, [id]).first).map(Note.init(row:))
-    }
-
-    /// Another connection to the database, for saving off the main thread: with WAL the main connection keeps
-    /// reading meanwhile, and a write of its own waits for the other one (busy timeout).
     public func makeWriter() throws -> SQLiteDB {
         try SQLiteDB(path: directory.appendingPathComponent("database.sqlite").path)
-    }
-
-    /// `saveNote` on the given connection.
-    public static func saveNote(_ note: Note, in db: SQLiteDB, at now: Int64 = Store.now()) throws {
-        let title = note.title.replacingOccurrences(of: "\n", with: " ")
-        try db.run("""
-            UPDATE notes SET title = ?, body = ?, is_todo = ?, todo_completed = ?, todo_due = ?, parent_id = ?, source_url = ?,
-                   updated_time = ?, user_updated_time = ?
-            WHERE id = ?
-            """, [title, note.body, note.isTodo ? 1 : 0, note.todoCompleted, note.todoDue, note.parentId, note.sourceUrl, now, now, note.id])
-    }
-
-    public func moveNotes(ids: [String], toFolder folderId: String) throws {
-        guard !ids.isEmpty else { return }
-        let now = Store.now()
-        try db.run("UPDATE notes SET parent_id = ?, updated_time = ?, user_updated_time = ? WHERE id IN (\(Store.placeholders(ids.count)))",
-                   [folderId, now, now] + ids)
-    }
-
-    public func setTodoCompleted(id: String, completed: Bool) throws {
-        let now = Store.now()
-        try db.run("UPDATE notes SET todo_completed = ?, updated_time = ?, user_updated_time = ? WHERE id = ?",
-                   [completed ? now : 0, now, now, id])
-    }
-
-    public func setIsTodo(ids: [String], isTodo: Bool) throws {
-        guard !ids.isEmpty else { return }
-        let now = Store.now()
-        try db.run("UPDATE notes SET is_todo = ?, todo_completed = 0, updated_time = ?, user_updated_time = ? WHERE id IN (\(Store.placeholders(ids.count)))",
-                   [isTodo ? 1 : 0, now, now] + ids)
-    }
-
-    @discardableResult
-    public func duplicateNote(id: String) throws -> Note? {
-        guard var fields = row(.note, id: id)?.values else { return nil }
-        let now = Store.now()
-        let newId = Store.newId()
-        fields["id"] = newId
-        fields["title"] = "\(fields["title"] as? String ?? "") - Copy"
-        for key in ["created_time", "updated_time", "user_created_time", "user_updated_time"] { fields[key] = now }
-        try upsert(.note, fields)
-        for tag in tags(forNote: id) { try addTag(tagId: tag.id, toNote: newId) }
-        return note(id: newId)
-    }
-
-    public func trashNotes(ids: [String]) throws {
-        guard !ids.isEmpty else { return }
-        let now = Store.now()
-        try db.run("UPDATE notes SET deleted_time = ?, updated_time = ? WHERE id IN (\(Store.placeholders(ids.count)))", [now, now] + ids)
-    }
-
-    public func restoreNotes(ids: [String]) throws {
-        let now = Store.now()
-        try db.transaction {
-            for id in ids {
-                guard let n = note(id: id) else { continue }
-                if !n.parentId.isEmpty, folder(id: n.parentId) != nil {
-                    try restoreFolderChain(startingAt: n.parentId, now: now)
-                } else if !n.parentId.isEmpty {
-                    try db.run("UPDATE notes SET parent_id = ? WHERE id = ?", [try defaultFolderId(), id])
-                }
-                try db.run("UPDATE notes SET deleted_time = 0, updated_time = ? WHERE id = ?", [now, id])
-            }
-        }
-    }
-
-    public func deleteNotesPermanently(ids: [String]) throws {
-        try db.transaction { try deleteNotesPermanentlyInTransaction(ids) }
-    }
-
-    private func deleteNotesPermanentlyInTransaction(_ ids: [String]) throws {
-        guard !ids.isEmpty else { return }
-        let ph = Store.placeholders(ids.count)
-        let links = ((try? db.query("SELECT id FROM note_tags WHERE note_id IN (\(ph))", ids)) ?? []).map { $0.string("id") }
-        try db.run("DELETE FROM note_tags WHERE note_id IN (\(ph))", ids)
-        try db.run("DELETE FROM notes WHERE id IN (\(ph))", ids)
-        for id in links { try recordDeletion(.noteTag, id) }
-        for id in ids { try recordDeletion(.note, id) }
-    }
-
-    public func emptyTrash() throws {
-        let noteIds = ((try? db.query("SELECT id FROM notes WHERE deleted_time > 0")) ?? []).map { $0.string("id") }
-        let folderIds = ((try? db.query("SELECT id FROM folders WHERE deleted_time > 0")) ?? []).map { $0.string("id") }
-        try db.transaction {
-            try deleteNotesPermanentlyInTransaction(noteIds)
-            for id in folderIds {
-                let remaining = try db.scalarInt("SELECT COUNT(*) FROM notes WHERE parent_id = ?", [id])
-                    + db.scalarInt("SELECT COUNT(*) FROM folders WHERE parent_id = ? AND deleted_time = 0", [id])
-                guard remaining == 0 else { continue }
-                try db.run("DELETE FROM folders WHERE id = ?", [id])
-                try recordDeletion(.folder, id)
-            }
-        }
-    }
-
-    /// First non-deleted folder, creating one when the database is empty.
-    public func defaultFolderId() throws -> String {
-        if let f = folders().first { return f.id }
-        return try createFolder(title: "Notes").id
-    }
-
-    // MARK: - Tags
-
-    public func tags() -> [Tag] {
-        let sql = """
-        SELECT tags.id, tags.title, COUNT(notes.id) AS c FROM tags
-        LEFT JOIN note_tags ON note_tags.tag_id = tags.id
-        LEFT JOIN notes ON notes.id = note_tags.note_id AND notes.deleted_time = 0
-        WHERE tags.encryption_applied = 0
-        GROUP BY tags.id ORDER BY tags.title COLLATE NOCASE
-        """
-        return ((try? db.query(sql)) ?? []).map { Tag(id: $0.string("id"), title: $0.string("title"), noteCount: Int($0.int("c"))) }
-    }
-
-    public func tags(forNote noteId: String) -> [Tag] {
-        let sql = """
-        SELECT tags.id, tags.title FROM tags JOIN note_tags ON note_tags.tag_id = tags.id
-        WHERE note_tags.note_id = ? ORDER BY tags.title COLLATE NOCASE
-        """
-        return ((try? db.query(sql, [noteId])) ?? []).map { Tag(id: $0.string("id"), title: $0.string("title"), noteCount: 0) }
-    }
-
-    public func addTag(tagId: String, toNote noteId: String) throws {
-        let exists = try db.scalarInt("SELECT COUNT(*) FROM note_tags WHERE note_id = ? AND tag_id = ?", [noteId, tagId])
-        guard exists == 0 else { return }
-        let now = Store.now()
-        try upsert(.noteTag, [
-            "id": Store.newId(), "note_id": noteId, "tag_id": tagId,
-            "created_time": now, "updated_time": now, "user_created_time": now, "user_updated_time": now,
-        ])
-    }
-
-    /// Replaces the note's tags with the given titles (case-insensitive, Joplin stores tag titles lowercased).
-    public func setTags(noteId: String, titles: [String]) throws {
-        let wanted = Array(Set(titles.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }))
-        try db.transaction {
-            var wantedIds: [String] = []
-            for title in wanted {
-                if let existing = try db.query("SELECT id FROM tags WHERE title = ? COLLATE NOCASE", [title]).first {
-                    wantedIds.append(existing.string("id"))
-                } else {
-                    let now = Store.now()
-                    let id = Store.newId()
-                    try upsert(.tag, ["id": id, "title": title, "created_time": now, "updated_time": now,
-                                      "user_created_time": now, "user_updated_time": now])
-                    wantedIds.append(id)
-                }
-            }
-            for link in try db.query("SELECT id, tag_id FROM note_tags WHERE note_id = ?", [noteId]) where !wantedIds.contains(link.string("tag_id")) {
-                try db.run("DELETE FROM note_tags WHERE id = ?", [link.string("id")])
-                try recordDeletion(.noteTag, link.string("id"))
-            }
-            for tagId in wantedIds { try addTag(tagId: tagId, toNote: noteId) }
-        }
-    }
-
-    public func renameTag(id: String, title: String) throws {
-        let now = Store.now()
-        try db.run("UPDATE tags SET title = ?, updated_time = ?, user_updated_time = ? WHERE id = ?", [title.lowercased(), now, now, id])
-    }
-
-    public func deleteTag(id: String) throws {
-        try db.transaction {
-            for link in try db.query("SELECT id FROM note_tags WHERE tag_id = ?", [id]) {
-                try recordDeletion(.noteTag, link.string("id"))
-            }
-            try db.run("DELETE FROM note_tags WHERE tag_id = ?", [id])
-            try db.run("DELETE FROM tags WHERE id = ?", [id])
-            try recordDeletion(.tag, id)
-        }
-    }
-
-    // MARK: - Resources
-
-    public func resource(id: String) -> Resource? {
-        row(.resource, id: id).map(Resource.init(row:))
-    }
-
-    public func url(for resource: Resource) -> URL {
-        resourceDirectory.appendingPathComponent(resource.storageName)
-    }
-
-    @discardableResult
-    public func addResource(fileAt source: URL) throws -> Resource {
-        let ext = source.pathExtension.lowercased()
-        let mime = UTType(filenameExtension: ext)?.preferredMIMEType ?? "application/octet-stream"
-        return try addResource(filename: source.lastPathComponent, mime: mime, fileExtension: ext) { dest in
-            try FileManager.default.copyItem(at: source, to: dest)
-        }
-    }
-
-    @discardableResult
-    public func addResource(data: Data, filename: String, mime: String, fileExtension: String) throws -> Resource {
-        try addResource(filename: filename, mime: mime, fileExtension: fileExtension) { dest in
-            try data.write(to: dest)
-        }
-    }
-
-    private func addResource(filename: String, mime: String, fileExtension: String, write: (URL) throws -> Void) throws -> Resource {
-        let id = Store.newId()
-        let now = Store.now()
-        let storage = fileExtension.isEmpty ? id : "\(id).\(fileExtension)"
-        let dest = resourceDirectory.appendingPathComponent(storage)
-        try write(dest)
-        let size = ((try? FileManager.default.attributesOfItem(atPath: dest.path))?[.size] as? NSNumber)?.int64Value ?? -1
-        try upsert(.resource, [
-            "id": id, "title": filename, "filename": filename, "mime": mime, "file_extension": fileExtension, "size": size,
-            "created_time": now, "updated_time": now, "user_created_time": now, "user_updated_time": now, "blob_updated_time": now,
-        ])
-        return resource(id: id)!
     }
 }

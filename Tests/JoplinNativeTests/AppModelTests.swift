@@ -6,8 +6,6 @@ import Testing
 
 @MainActor
 @Suite struct AppModelTests {
-    // MARK: Startup and loading
-
     @Test func firstLaunchCreatesWelcomeContent() throws {
         let h = try ModelHarness()
         let model = h.model
@@ -19,7 +17,6 @@ import Testing
         #expect(model.currentNote != nil)
         #expect(h.store.setting("welcome_created") == "1")
 
-        // A second launch on the same data must not add another copy.
         let again = AppModel(store: h.store, defaults: h.defaults, pasteboard: h.pasteboard)
         #expect(again.notes.count == 2)
     }
@@ -197,7 +194,6 @@ import Testing
         let id = try #require(model.currentNote?.id)
         model.updateBody("mine")
         model.flushSave()
-        // Same time and size: the body in memory is taken to be current (a real change moves `updated_time`).
         try h.store.db.run("UPDATE notes SET body = 'MINE', title = 'retitled' WHERE id = ?", [id])
         model.reloadNotes(selectFirst: false)
         #expect(model.currentNote?.body == "mine")
@@ -220,8 +216,6 @@ import Testing
         #expect(!model.notes.contains { $0.id == id })
     }
 
-    // MARK: Editing
-
     @Test func editsAreDebouncedAndFlushed() async throws {
         let h = try ModelHarness()
         let model = h.model
@@ -229,12 +223,11 @@ import Testing
 
         model.updateTitle("New title")
         model.updateBody("# Heading\nbody text")
-        model.updateTitle("New title") // unchanged: no-op
+        model.updateTitle("New title")
         #expect(model.notes.first { $0.id == id }?.title == "New title")
         #expect(model.notes.first { $0.id == id }?.snippet == "Heading body text")
         #expect(h.store.note(id: id)?.title != "New title")
 
-        // The debounced save fires ~600 ms later; allow for a busy main actor on CI.
         for _ in 0..<100 where h.store.note(id: id)?.title != "New title" {
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -256,13 +249,11 @@ import Testing
         #expect(model.currentNote == nil)
     }
 
-    // MARK: Notes
-
     @Test func newNoteGoesToTheSelectedContext() throws {
         let h = try ModelHarness(welcome: false)
         let model = h.model
 
-        model.newNote() // empty database: creates the default notebook
+        model.newNote()
         #expect(model.folders.map(\.title) == ["Notes"])
         let first = try #require(model.currentNote)
         #expect(model.titleFocusRequest == 1)
@@ -293,7 +284,6 @@ import Testing
         #expect(h.store.note(id: first.id) != nil)
     }
 
-    /// The app starts with nothing chosen in the sidebar, the notebooks collapsed and no note open.
     @Test func startsWithNothingChosen() throws {
         let h = try ModelHarness(defaults: { $0.set(["x"], forKey: "expandedFolders") })
         let model = AppModel(store: h.store, defaults: h.defaults, pasteboard: h.pasteboard, syncTransport: h.server, startsEmpty: true)
@@ -302,13 +292,11 @@ import Testing
         #expect(model.expandedFolders.isEmpty && model.listTitle == "Notes")
         model.sidebarSelection = .allNotes
         #expect(!model.notes.isEmpty && model.currentNote != nil && model.listTitle == "All Notes")
-        // Choosing nothing again empties the list; a search still lists what it finds.
         model.sidebarSelection = nil
         #expect(model.notes.isEmpty && model.currentNote == nil)
         model.searchDelay = 0
         model.searchText = "Joplin"
         #expect(!model.isNothingChosen && !model.notes.isEmpty)
-        // Other models (the tests') still start on All Notes with its first note.
         #expect(h.model.sidebarSelection == .allNotes && h.model.currentNote != nil)
     }
 
@@ -342,7 +330,7 @@ import Testing
         let id = try #require(model.currentNote?.id)
 
         model.trashNotes([])
-        model.deleteSelectedNotes() // not in trash: moves to trash
+        model.deleteSelectedNotes()
         #expect(model.trashCount == 1)
         #expect(!model.notes.contains { $0.id == id })
 
@@ -353,7 +341,7 @@ import Testing
 
         model.trashNotes([id])
         model.selectedNoteIDs = [id]
-        model.deleteSelectedNotes() // in trash: asks first
+        model.deleteSelectedNotes()
         let confirmation = try #require(model.confirmation)
         #expect(confirmation.title == "Delete this note permanently?")
         #expect(h.store.note(id: id) != nil)
@@ -394,7 +382,6 @@ import Testing
         model.sidebarSelection = .folder(source.id)
         model.selectedNoteIDs = [n1.id, n2.id]
 
-        // Dragging one row of a multi-selection moves the whole selection.
         #expect(model.dropOnFolder([n1.id], folderId: target.id))
         #expect(h.store.note(id: n2.id)?.parentId == target.id)
         #expect(h.store.note(id: n3.id)?.parentId == source.id)
@@ -406,8 +393,6 @@ import Testing
         #expect(h.store.folder(id: source.id)?.parentId == target.id)
         #expect(model.folderTree.first?.children?.map(\.id) == [source.id])
     }
-
-    // MARK: Folders
 
     @Test func folderPrompts() throws {
         let h = try ModelHarness(welcome: false)
@@ -462,15 +447,13 @@ import Testing
         #expect(h.store.folder(id: folder.id) == nil)
     }
 
-    // MARK: Tags
-
     @Test func tagEditing() throws {
         let h = try ModelHarness()
         let model = h.model
         model.selectedNoteIDs = [try #require(model.notes.first { $0.title == "Try checklists" }).id]
         #expect(model.currentTags == ["start"])
 
-        model.setCurrentTags(["START"]) // same set: nothing to do
+        model.setCurrentTags(["START"])
         model.setCurrentTags(["start", " Next ", ""])
         #expect(model.currentTags == ["next", "start"])
         #expect(model.tags.map(\.title) == ["next", "start"])
@@ -491,8 +474,6 @@ import Testing
         model.deleteTag(try #require(model.tags.first))
         #expect(model.tags.isEmpty)
     }
-
-    // MARK: Attachments and links
 
     @Test func attachments() throws {
         let h = try ModelHarness(welcome: false)
@@ -532,7 +513,7 @@ import Testing
         #expect(model.sidebarSelection == .folder(other.id))
         #expect(model.currentNote?.id == target.id)
 
-        model.openItem(id: target.id) // already visible: just selects it
+        model.openItem(id: target.id)
         #expect(model.sidebarSelection == .folder(other.id))
 
         model.openItem(id: trashed.id)
@@ -581,8 +562,6 @@ import Testing
         #expect(renderer.render("[](:/\(res.id))").string == "\u{FFFC}\u{2009}file.txt")
         #expect(renderer.resolveResource(fixtureId(404)) == nil)
     }
-
-    // MARK: Import
 
     @Test func importReportsAreShown() throws {
         let source = try Store(directory: temporaryDirectory())
@@ -637,7 +616,6 @@ import Testing
 
 @MainActor
 @Suite struct EditorTypingTests {
-    /// Typing changes the note without rebuilding the views that observe it; the list follows once it is saved.
     @Test func typedChangesDoNotNotifyTheNoteObservers() throws {
         let h = try ModelHarness()
         let model = h.model
@@ -656,7 +634,6 @@ import Testing
         #expect(model.notes.first { $0.id == id }?.snippet == "typed body")
     }
 
-    /// The note left is saved in the background; coming back to it reads the saved text.
     @Test func switchingNotesRightAfterTypingKeepsTheText() throws {
         let h = try ModelHarness()
         let model = h.model

@@ -1,8 +1,4 @@
 #!/bin/bash
-# Runs the test suite with code coverage and prints a per-file report.
-#   scripts/coverage.sh                 -> table on stdout
-#   scripts/coverage.sh --lcov out.info -> also write an lcov file (for CI upload)
-#   MIN_COVERAGE=90 scripts/coverage.sh -> fail when total line coverage is lower
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -10,13 +6,11 @@ scripts/test.sh --enable-code-coverage
 
 BIN=$(swift build --show-bin-path)
 PROFILE="$BIN/codecov/default.profdata"
-# SwiftPM builds one bundle per test target (older versions: a single *PackageTests bundle).
 OBJECTS=()
 for bundle in "$BIN"/*.xctest; do
   [ ${#OBJECTS[@]} -eq 0 ] && OBJECTS+=("$bundle/Contents/MacOS/$(basename "$bundle" .xctest)") \
     || OBJECTS+=(-object "$bundle/Contents/MacOS/$(basename "$bundle" .xctest)")
 done
-# The stress harness only runs against a real window (scripts/stress).
 IGNORE='(\.build|Tests)/|StressProbe\.swift'
 
 xcrun llvm-cov report "${OBJECTS[@]}" -instr-profile "$PROFILE" -ignore-filename-regex "$IGNORE"

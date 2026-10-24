@@ -1,6 +1,5 @@
 import Foundation
 
-/// Joplin item types (packages/lib/BaseModel.ts, enum ModelType).
 public enum ModelType: Int, CaseIterable, Sendable {
     case note = 1
     case folder = 2
@@ -11,7 +10,6 @@ public enum ModelType: Int, CaseIterable, Sendable {
     case masterKey = 9
     case revision = 13
 
-    /// Types this app stores and exchanges with other Joplin clients.
     public static let syncable: [ModelType] = [.folder, .note, .tag, .noteTag, .resource]
 
     public var table: String? {
@@ -48,11 +46,7 @@ private func t(_ name: String, _ def: String = "") -> FieldDef { FieldDef(name: 
 private func i(_ name: String, _ def: Int = 0) -> FieldDef { FieldDef(name: name, type: .int, defaultValue: String(def)) }
 private func n(_ name: String) -> FieldDef { FieldDef(name: name, type: .numeric, defaultValue: "0") }
 
-/// Column layout mirrors the current Joplin schema (packages/lib/services/database/types.ts)
-/// so that items serialize to exactly the same set of properties.
 public enum Schema {
-    public static let version = 2
-
     public static let fields: [ModelType: [FieldDef]] = [
         .folder: [
             t("id"), t("title"), i("created_time"), i("updated_time"), i("user_created_time"), i("user_updated_time"),
@@ -139,25 +133,46 @@ public enum Schema {
         return sql
     }
 
+    static let migrations: [String] = [
+        createSQL,
+        """
+        CREATE TABLE IF NOT EXISTS sync_items (
+            item_id TEXT PRIMARY KEY,
+            item_type INT NOT NULL,
+            sync_time INT NOT NULL DEFAULT 0
+        );
+        """,
+        """
+        CREATE TABLE sync_targets (
+            id INTEGER PRIMARY KEY,
+            identity TEXT NOT NULL UNIQUE,
+            cursor TEXT NOT NULL DEFAULT ''
+        );
+        CREATE TABLE sync_items_by_target (
+            target_id INT NOT NULL,
+            item_id TEXT NOT NULL,
+            item_type INT NOT NULL,
+            sync_time INT NOT NULL DEFAULT 0,
+            PRIMARY KEY (target_id, item_id)
+        ) WITHOUT ROWID;
+        INSERT INTO sync_items_by_target (target_id, item_id, item_type, sync_time)
+            SELECT 0, item_id, item_type, sync_time FROM sync_items;
+        DROP TABLE sync_items;
+        ALTER TABLE sync_items_by_target RENAME TO sync_items;
+        CREATE INDEX sync_items_item_id ON sync_items (item_id);
+        CREATE TABLE missing_blobs (resource_id TEXT PRIMARY KEY);
+        """,
+    ]
+
+    public static var version: Int { migrations.count }
+
     static func migrate(_ db: SQLiteDB) throws {
-        let current = try db.scalarInt("PRAGMA user_version")
-        if current < 1 {
-            try db.transaction { try db.exec(createSQL) }
-        }
-        if current < 2 {
-            // Last synced updated_time of each item; items without a row have never been uploaded.
+        let current = Int(try db.scalarInt("PRAGMA user_version"))
+        for (index, sql) in migrations.enumerated() where index >= current {
             try db.transaction {
-                try db.exec("""
-                CREATE TABLE IF NOT EXISTS sync_items (
-                    item_id TEXT PRIMARY KEY,
-                    item_type INT NOT NULL,
-                    sync_time INT NOT NULL DEFAULT 0
-                );
-                """)
+                try db.exec(sql)
+                try db.exec("PRAGMA user_version = \(index + 1)")
             }
-        }
-        if current < version {
-            try db.exec("PRAGMA user_version = \(version)")
         }
     }
 }

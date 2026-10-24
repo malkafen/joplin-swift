@@ -48,12 +48,11 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
 
     @Test func fromEvents() {
         #expect(Hotkey(event: keyEvent("1", keyCode: 18, flags: [.command, .control])) == Hotkey(key: "1", command: true, control: true))
-        #expect(Hotkey(event: keyEvent("a", keyCode: 0)) == nil) // plain letter
+        #expect(Hotkey(event: keyEvent("a", keyCode: 0)) == nil)
         #expect(Hotkey(event: keyEvent("", keyCode: 123, flags: [.option]))?.key == "left")
-        #expect(Hotkey(event: keyEvent("", keyCode: 96))?.key == "f5") // function key alone
+        #expect(Hotkey(event: keyEvent("", keyCode: 96))?.key == "f5")
     }
 
-    /// With a Cyrillic layout active the L key types "д"; the shortcut is still recorded on L.
     @Test func eventsAreReadOnTheLatinKey() {
         let event = keyEvent("\u{0C}", keyCode: 37, flags: [.control, .option], ignoring: "д")
         #expect(Hotkey(event: event) == Hotkey(key: "l", control: true, option: true))
@@ -67,9 +66,9 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
                 .map { Unmanaged<CFString>.fromOpaque($0).takeUnretainedValue() as String } ?? ""
             return id.hasSuffix(".Russian")
         }
-        #expect(Hotkey(key: "l", control: true).latinized() == nil) // already Latin
+        #expect(Hotkey(key: "l", control: true).latinized() == nil)
         #expect(Hotkey(key: "left", control: true).latinized() == nil)
-        guard !russian.isEmpty else { return } // the Russian layout is not enabled on this Mac
+        guard !russian.isEmpty else { return }
         #expect(Hotkey(key: "д", control: true, option: true).latinized(layouts: russian) == Hotkey(key: "l", control: true, option: true))
         #expect(Hotkey(key: "й", command: true).latinized(layouts: russian) == Hotkey(key: "q", command: true))
 
@@ -109,7 +108,7 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         #expect(!model.recordShortcut(keyEvent("x")))
         model.startRecordingShortcut(.cycleLayout)
         #expect(model.recordingShortcut == .cycleLayout)
-        #expect(model.recordShortcut(keyEvent("q"))) // not a valid shortcut: swallowed, still recording
+        #expect(model.recordShortcut(keyEvent("q")))
         #expect(model.recordingShortcut == .cycleLayout)
         #expect(model.recordShortcut(keyEvent("k", keyCode: 40, flags: [.control, .option])))
         #expect(model.hotkey(for: .cycleLayout) == Hotkey(key: "k", control: true, option: true))
@@ -142,13 +141,11 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         return (tv, vim, window)
     }
 
-    /// Keys as typed: what the engine does not take (insert mode) goes into the text, as in the app.
     private func keys(_ vim: VimEngine, _ sequence: String) {
         for c in sequence {
             if !vim.handle(key: String(c)) {
                 vim.textView?.insertText(String(c), replacementRange: vim.textView!.selectedRange())
             }
-            // Each key press is its own event: let the undo manager close the event's undo group.
             RunLoop.main.run(mode: .default, before: Date())
         }
     }
@@ -158,9 +155,9 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
     @Test func verticalMotionsStopAtTheEnds() {
         let (tv, vim, window) = setup("abc\nde\n\nfghi\nj")
         defer { window.close() }
-        keys(vim, "ll2j"); #expect(cursor(tv) == 7) // empty line
-        keys(vim, "j"); #expect(cursor(tv) == 10) // column 2 again
-        keys(vim, "9j"); #expect(cursor(tv) == 13) // stops at the last line
+        keys(vim, "ll2j"); #expect(cursor(tv) == 7)
+        keys(vim, "j"); #expect(cursor(tv) == 10)
+        keys(vim, "9j"); #expect(cursor(tv) == 13)
         keys(vim, "j"); #expect(cursor(tv) == 13)
         keys(vim, "k"); #expect(cursor(tv) == 10)
         keys(vim, "9k"); #expect(cursor(tv) == 2)
@@ -173,9 +170,9 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
     @Test func motions() {
         let (tv, vim, window) = setup("one two-three  four\n  second line\n\nlast")
         defer { window.close() }
-        #expect(tv.selectedRange() == NSRange(location: 0, length: 1)) // block cursor
+        #expect(tv.selectedRange() == NSRange(location: 0, length: 1))
         keys(vim, "w"); #expect(cursor(tv) == 4)
-        keys(vim, "w"); #expect(cursor(tv) == 7) // "-" is a word of its own
+        keys(vim, "w"); #expect(cursor(tv) == 7)
         keys(vim, "W"); #expect(cursor(tv) == 15)
         keys(vim, "b"); #expect(cursor(tv) == 8)
         keys(vim, "B"); #expect(cursor(tv) == 4)
@@ -189,7 +186,7 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         keys(vim, "G"); #expect(cursor(tv) == 35)
         keys(vim, "gg"); #expect(cursor(tv) == 0)
         keys(vim, "2G"); #expect(cursor(tv) == 22)
-        keys(vim, "k"); #expect(cursor(tv) == 2) // column kept
+        keys(vim, "k"); #expect(cursor(tv) == 2)
         keys(vim, "fo"); #expect(cursor(tv) == 6)
         keys(vim, ";"); #expect(cursor(tv) == 16)
         keys(vim, ","); #expect(cursor(tv) == 6)
@@ -198,9 +195,9 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         keys(vim, "Tw"); #expect(cursor(tv) == 6)
         keys(vim, "}"); #expect(cursor(tv) == 34)
         keys(vim, "{"); #expect(cursor(tv) == 0)
-        keys(vim, "zq") // unknown keys do nothing
+        keys(vim, "zq")
         #expect(tv.string.hasPrefix("one"))
-        vim.handle(key: "\u{04}") // ⌃D
+        vim.handle(key: "\u{04}")
         #expect(cursor(tv) == 35)
         vim.handle(key: "\u{15}")
         #expect(cursor(tv) == 0)
@@ -251,18 +248,18 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         keys(vim, "A!\u{1B}"); #expect(tv.string.hasPrefix("jELlo world!"))
         keys(vim, "I> \u{1B}"); #expect(tv.string.hasPrefix("> jELlo"))
         keys(vim, "j0a-\u{1B}"); #expect(tv.string.hasSuffix("\n - indented"))
-        keys(vim, "o- item\u{1B}"); #expect(tv.string.hasSuffix("\n - item")) // keeps the indentation
+        keys(vim, "o- item\u{1B}"); #expect(tv.string.hasSuffix("\n - item"))
         keys(vim, "Otop\u{1B}"); #expect(tv.string.contains("\n top\n - item"))
         keys(vim, ">>"); #expect(tv.string.contains("\n     top"))
         keys(vim, "<<"); #expect(tv.string.contains("\n top"))
         keys(vim, "ggs#\u{1B}"); #expect(tv.string.hasPrefix("#"))
         keys(vim, "ix\u{1B}"); #expect(tv.string.hasPrefix("x#"))
         let before = tv.string
-        keys(vim, "dtX") // not found: no change
+        keys(vim, "dtX")
         #expect(tv.string == before)
-        keys(vim, "0d2fl") // up to and including the second "l"
+        keys(vim, "0d2fl")
         #expect(tv.string.hasPrefix("d!"))
-        keys(vim, "jdgg") // linewise to the top
+        keys(vim, "jdgg")
         #expect(tv.string.hasPrefix(" top"))
     }
 
@@ -292,8 +289,6 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         keys(vim, "V"); keys(vim, "V"); #expect(vim.mode == .normal)
     }
 
-    /// With the Russian layout active the command keys still work by position; f, t, r and the search take the
-    /// Cyrillic characters themselves.
     @Test func startingToType() {
         let (tv, vim, window) = setup("  ab\ncd")
         defer { window.close() }
@@ -305,31 +300,31 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         keys(vim, "\u{1B}0a"); #expect(cursor(tv) == 1)
         keys(vim, "\u{1B}"); #expect(vim.mode == .normal)
         tv.isEditable = false
-        keys(vim, "o"); #expect(tv.string == "  ab\n  \n  x\ncd") // read-only: nothing to type into
+        keys(vim, "o"); #expect(tv.string == "  ab\n  \n  x\ncd")
     }
 
     @Test func commandsWithANonLatinLayout() {
         let (tv, vim, window) = setup("один\nдва\nтри")
         defer { window.close() }
         vim.nonLatinLayoutActive = { true }
-        #expect(vim.handle(keyEvent("о", keyCode: 38))) // j
+        #expect(vim.handle(keyEvent("о", keyCode: 38)))
         #expect(cursor(tv) == 5)
-        #expect(vim.handle(keyEvent("Р", keyCode: 4, flags: .shift))) // H is not a motion here: ignored
-        #expect(vim.handle(keyEvent("а", keyCode: 3))) // f…
-        #expect(vim.handle(keyEvent("а", keyCode: 3))) // …а: the argument stays Cyrillic
+        #expect(vim.handle(keyEvent("Р", keyCode: 4, flags: .shift)))
+        #expect(vim.handle(keyEvent("а", keyCode: 3)))
+        #expect(vim.handle(keyEvent("а", keyCode: 3)))
         #expect(cursor(tv) == 7)
-        #expect(vim.handle(keyEvent("в", keyCode: 2))) // d
-        #expect(vim.handle(keyEvent("в", keyCode: 2))) // dd
+        #expect(vim.handle(keyEvent("в", keyCode: 2)))
+        #expect(vim.handle(keyEvent("в", keyCode: 2)))
         #expect(tv.string == "один\nтри")
-        #expect(vim.handle(keyEvent("\u{04}", keyCode: 2, flags: .control, ignoring: "в"))) // ⌃D
-        #expect(vim.handle(keyEvent("\u{1B}", keyCode: 33, flags: .control, ignoring: "х"))) // ⌃[ is Esc
+        #expect(vim.handle(keyEvent("\u{04}", keyCode: 2, flags: .control, ignoring: "в")))
+        #expect(vim.handle(keyEvent("\u{1B}", keyCode: 33, flags: .control, ignoring: "х")))
         #expect(vim.mode == .normal)
-        #expect(vim.handle(keyEvent("ш", keyCode: 34))) // i
+        #expect(vim.handle(keyEvent("ш", keyCode: 34)))
         #expect(vim.mode == .insert)
-        #expect(!vim.handle(keyEvent("ш", keyCode: 34))) // typing in insert mode is untouched
+        #expect(!vim.handle(keyEvent("ш", keyCode: 34)))
         vim.nonLatinLayoutActive = { false }
         #expect(vim.handle(keyEvent("\u{1B}", keyCode: 53)))
-        #expect(vim.handle(keyEvent("о", keyCode: 38))) // a Latin layout: "о" is not a command
+        #expect(vim.handle(keyEvent("о", keyCode: 38)))
         #expect(vim.mode == .normal)
     }
 
@@ -340,11 +335,11 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         vim.onModeChange = { modes.append($0) }
         #expect(vim.handle(keyEvent("l", keyCode: 37)))
         #expect(cursor(tv) == 1)
-        #expect(!vim.handle(keyEvent("c", keyCode: 8, flags: .command))) // menu shortcuts pass through
+        #expect(!vim.handle(keyEvent("c", keyCode: 8, flags: .command)))
         #expect(!vim.handle(keyEvent(String(Character(UnicodeScalar(NSLeftArrowFunctionKey)!)), keyCode: 123)))
         #expect(vim.handle(keyEvent("i", keyCode: 34)))
         #expect(vim.mode == .insert)
-        #expect(!vim.handle(keyEvent("z", keyCode: 6))) // typing goes to the text view
+        #expect(!vim.handle(keyEvent("z", keyCode: 6)))
         #expect(vim.handle(keyEvent("\u{1B}", keyCode: 53)))
         #expect(vim.mode == .normal)
         #expect(vim.handle(keyEvent("i", keyCode: 34)))
@@ -362,7 +357,6 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         tv.setSelectedRange(NSRange(location: 2, length: 0))
         vim.normalizeSelection()
         #expect(tv.selectedRange().length == 1)
-        // The text view routes keys through the engine.
         (tv as? MarkdownTextView)?.keyDown(with: keyEvent("x", keyCode: 7))
         #expect(tv.string.count == 6)
     }
@@ -380,14 +374,11 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         let rows = ids.enumerated().map { Row(id: $1, minY: CGFloat($0) * 28, maxY: CGFloat($0 + 1) * 28) }
         let chain = Dictionary(uniqueKeysWithValues: zip(ids.dropFirst(), ids))
         #expect(StickyFolders.sticky(rows: rows, top: 0, rowHeight: 28, parentOf: chain, maxRows: 6).isEmpty)
-        // "d" at the top of a single deep chain: every ancestor hidden under the pinned rows is pinned too.
         #expect(StickyFolders.sticky(rows: rows, top: 84, rowHeight: 28, parentOf: chain, maxRows: 6) == ["a", "b", "c", "d", "e"])
         #expect(StickyFolders.sticky(rows: rows, top: 84, rowHeight: 28, parentOf: chain, maxRows: 2) == ["d", "e"])
         #expect(StickyFolders.sticky(rows: rows, top: 1000, rowHeight: 28, parentOf: chain, maxRows: 6).isEmpty)
-        // "e" is a sibling of "b": the b-subtree ends with "d", so only "a" stays pinned.
         let siblings = ["b": "a", "c": "b", "d": "c", "e": "a"]
         #expect(StickyFolders.sticky(rows: Array(rows.prefix(5)), top: 84, rowHeight: 28, parentOf: siblings, maxRows: 6) == ["a"])
-        // A new root right below the pinned row: the old context is pushed out.
         let roots = ["a1": "a", "a2": "a1", "x": ""]
         let mixed = [Row(id: "a2", minY: 0, maxY: 28), Row(id: "x", minY: 28, maxY: 56), Row(id: "y", minY: 56, maxY: 84)]
         #expect(StickyFolders.sticky(rows: mixed, top: 10, rowHeight: 28, parentOf: roots, maxRows: 6).isEmpty)
@@ -451,7 +442,6 @@ func keyEvent(_ chars: String, keyCode: UInt16 = 0, flags: NSEvent.ModifierFlags
         model.vimMode = true
         model.vimMode = false
         #expect(model.vimState == .insert)
-        // Sidebar and settings render with the tree, the sticky header and the shortcut recorders.
         model.expandAllFolders()
         let host = NSHostingView(rootView: ContentView().environment(model))
         host.frame = NSRect(x: 0, y: 0, width: 1000, height: 600)

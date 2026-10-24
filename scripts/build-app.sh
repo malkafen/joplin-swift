@@ -1,15 +1,10 @@
 #!/bin/bash
-# Builds "Joplin Native.app" with SwiftPM (Command Line Tools are enough, Xcode is not required).
-#   scripts/build-app.sh            -> build/Joplin Native.app
-#   scripts/build-app.sh --install  -> also copy to /Applications
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="Joplin Native"
 EXEC=JoplinNative
 BUNDLE_ID=io.github.malkafen.JoplinNative
-# Versions follow upstream Joplin tags (v3.7.21 -> 3.7.21). Between releases git describe gives
-# "3.7.21-4-gabc123": the short version stays numeric, the build number keeps the full string.
 VERSION=${VERSION:-$(git describe --tags --always 2>/dev/null || echo 0.0.0)}
 VERSION=${VERSION#v}
 case "$VERSION" in [0-9]*) ;; *) VERSION=0.0.0-$VERSION ;; esac
@@ -22,8 +17,6 @@ APP="build/$APP_NAME.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN/$EXEC" "$APP/Contents/MacOS/$EXEC"
-# Record the SDK the app was built with. The SwiftPM build system of some toolchains writes the deployment
-# target there instead, and macOS then runs the app with the look of that old system.
 SDK_VERSION=$(xcrun --show-sdk-version)
 MIN_VERSION=$(otool -l "$APP/Contents/MacOS/$EXEC" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
 xcrun vtool -set-build-version macos "${MIN_VERSION:-14.0}" "$SDK_VERSION" -replace \

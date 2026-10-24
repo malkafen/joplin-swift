@@ -1,7 +1,4 @@
 #!/bin/bash
-# Stress test: Joplin Native against Joplin Desktop on the same data (docs/benchmark.md).
-# Usage: scripts/stress/run.sh ["path/to/Joplin Native.app"]   (RUNS=3 by default; STRESS_DIR=/tmp/stress)
-# Needs /Applications/Joplin.app. Everything lives in STRESS_DIR: a separate Joplin profile, never your own.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 app=${1:-"$here/../../build/Joplin Native.app"}
@@ -10,7 +7,6 @@ runs=${RUNS:-3}
 mkdir -p "$work"
 cd "$work"
 quit_joplin() { osascript -e 'quit app "Joplin"' 2>/dev/null || true; sleep 8; }
-# CPU and memory of every process of the app, sampled next to the run (sample.py).
 sampler=""
 sample() { python3 "$here/sample.py" "$1" "$2" & sampler=$!; }
 stop_sampling() { kill "$sampler" 2>/dev/null || true; wait "$sampler" 2>/dev/null || true; }
@@ -45,7 +41,6 @@ if [ ! -d native-pristine ]; then
     --env JN_SNAPSHOT="$work/import.png" --env JN_SNAPSHOT_DELAY=30 --env JN_SNAPSHOT_QUIT=1 "$app"
 fi
 
-# Notes that contain the search word, so the drivers know when the list shows the final results.
 expected=$(python3 - <<'EOF'
 import re, sqlite3
 word = re.compile(r"(?<!\w)значение(?!\w)", re.I)

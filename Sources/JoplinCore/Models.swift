@@ -17,7 +17,6 @@ public struct Folder: Identifiable, Hashable, Sendable {
         userUpdatedTime = row.int("user_updated_time")
     }
 
-    /// Joplin stores the notebook icon as JSON: {"emoji":"📒","name":"","type":1}
     public var emoji: String? {
         guard !icon.isEmpty, let data = icon.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -42,8 +41,6 @@ public struct NoteSummary: Identifiable, Hashable, Sendable {
     public var userUpdatedTime: Int64
     public var userCreatedTime: Int64
     public var deletedTime: Int64
-    /// The start of the note (or the text around a search match) without Markdown. Cleaned when read, so a list of
-    /// thousands of notes does not clean them all on every reload while only the visible rows show it.
     public var snippet: String {
         get { plainSnippet ?? Snippet.make(from: markdownSnippet) }
         set { plainSnippet = newValue }
@@ -120,7 +117,6 @@ public struct Resource: Identifiable, Hashable, Sendable {
         size = row.int("size")
     }
 
-    /// Same naming as Joplin's resourceFilename(): "<id>.<ext>" or "<id>".
     public var storageName: String { fileExtension.isEmpty ? id : "\(id).\(fileExtension)" }
 
     public var isImage: Bool { mime.hasPrefix("image/") }
@@ -154,7 +150,6 @@ public enum Snippet {
         ("\\s+", " "),
     ].map { (try! NSRegularExpression(pattern: $0.0), $0.1) }
 
-    /// The regex results are autoreleased; the first note list is loaded before the run loop drains any pool.
     public static func make(from markdown: String) -> String {
         autoreleasepool {
             var s = markdown

@@ -51,7 +51,6 @@ def layout(target):
 def viewer_has(text, timeout=300):
     return j.until(f"(() => {{ const m = document.getElementById('rendered-md'); let e = m && m.lastElementChild; for (let i = 0; e && i < 4; i++, e = e.previousElementSibling) if (e.textContent.includes({json.dumps(text)})) return true; return false; }})()", "viewer", timeout)
 
-# 1. Switching between ordinary notes in the editor.
 layout([True, False])
 folder("Notebook 00")
 titles = j.js("[...document.querySelectorAll('.note-list-item .title')].map(e => e.innerText.trim()).slice(1, 21)")
@@ -63,7 +62,6 @@ for t in titles:
     freezes.append(j.freeze(0.3))
 log("switch_notes", n=len(times), timeouts=len(titles) - len(times), median=round(statistics.median(times)), max=round(max(times)), freeze_max=max(freezes))
 
-# 2. Huge notes.
 folder("Huge")
 for name in ["Huge 1 MB", "Huge 5 MB", "Huge 20 MB"]:
     nid, head = huge[name]; mark = "STRESSEND " + name.replace(" ", "")
@@ -73,7 +71,6 @@ for name in ["Huge 1 MB", "Huge 5 MB", "Huge 20 MB"]:
     log("open_editor", note=name, ready=r and round(r), freeze=j.freeze(), settled=j.settled)
     m = layout([True, True]); r2 = viewer_has(mark)
     log("to_split", note=name, ready=r2 and round(r2), freeze=j.freeze(), settled=j.settled)
-    # Typing at the end of the note, before the final newline.
     j.click("[...document.querySelectorAll('.cm-line')].find(e => { const r = e.getBoundingClientRect(); return r.top > 0 && r.bottom < innerHeight; })"); time.sleep(0.5)
     j.start(); j.key("ArrowDown", 4)
     r = j.until("[...document.querySelectorAll('.cm-line')].some(e => e.textContent.startsWith('STRESSEND'))")
@@ -91,7 +88,6 @@ for name in ["Huge 1 MB", "Huge 5 MB", "Huge 20 MB"]:
     layout([True, False])
     log("to_editor", note=name, ready=round((time.time() - j.t0) * 1000), freeze=j.freeze(), settled=j.settled)
 
-# 3. Opening a huge note straight in split, coming from another one.
 layout([True, True])
 for prev, name in [("Huge 20 MB", "Huge 1 MB"), ("Huge 1 MB", "Huge 5 MB"), ("Huge 5 MB", "Huge 20 MB")]:
     j.click(note_item(prev)); viewer_has("STRESSEND " + prev.replace(" ", "")); time.sleep(3)
@@ -99,7 +95,6 @@ for prev, name in [("Huge 20 MB", "Huge 1 MB"), ("Huge 1 MB", "Huge 5 MB"), ("Hu
     r = viewer_has("STRESSEND " + name.replace(" ", ""))
     log("open_split", note=name, ready=r and round(r), freeze=j.freeze(2), settled=j.settled)
 
-# 4. Global search typed letter by letter while the 5 MB note is open in split.
 layout([True, True])
 j.start(); j.click(note_item("Huge 5 MB")); viewer_has("STRESSEND Huge5MB"); time.sleep(3)
 j.click("document.querySelector('input[placeholder^=\"Search\"]')"); time.sleep(0.5)

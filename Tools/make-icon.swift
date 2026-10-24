@@ -1,5 +1,3 @@
-// Draws the app icon into an .iconset directory: swift Tools/make-icon.swift <out.iconset>
-// The artwork is Tools/AppIcon.svg, placed on the macOS icon grid (an 824 pt body inside the 1024 pt canvas).
 import AppKit
 
 let out = URL(fileURLWithPath: CommandLine.arguments[1], isDirectory: true)

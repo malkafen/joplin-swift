@@ -7,9 +7,9 @@ import Testing
 
     @Test func bindsAndReadsEveryType() throws {
         let db = try memory()
-        try db.exec("CREATE TABLE t (a, b, c, d, e, f, g, h, i, j)")
-        try db.run("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
-            nil, NSNull(), true, 7, Int64(8), Int32(9), 1.5, "text", Data([1, 2, 3]), URL(string: "https://x.y")!,
+        try db.exec("CREATE TABLE t (a, b, c, d, e, f, g, h, i, j, k)")
+        try db.run("INSERT INTO t VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            nil, NSNull(), true, 7, Int64(8), Int32(9), 1.5, "text", Data([1, 2, 3]), URL(string: "https://x.y")!, false,
         ])
         let row = try #require(try db.query("SELECT * FROM t").first)
         #expect(row["a"] is NSNull)
@@ -22,6 +22,7 @@ import Testing
         #expect(row.string("h") == "text")
         #expect(row["i"] as? Data == Data([1, 2, 3]))
         #expect(row.string("j") == "https://x.y")
+        #expect(row.int("k") == 0)
     }
 
     @Test func emptyBlob() throws {
@@ -79,6 +80,47 @@ import Testing
         #expect(try db.scalarInt("SELECT COUNT(*) FROM t") == 1)
     }
 
+    @Test func nestedTransactionsUseSavepoints() throws {
+        let db = try memory()
+        try db.exec("CREATE TABLE t (x)")
+        struct Boom: Error {}
+        try db.transaction {
+            try db.run("INSERT INTO t VALUES (1)")
+            #expect(throws: Boom.self) {
+                try db.transaction {
+                    try db.run("INSERT INTO t VALUES (2)")
+                    throw Boom()
+                }
+            }
+            try db.transaction { try db.run("INSERT INTO t VALUES (3)") }
+        }
+        #expect(try db.query("SELECT x FROM t ORDER BY x").map { $0.int("x") } == [1, 3])
+        #expect(throws: Boom.self) {
+            try db.transaction {
+                try db.transaction { try db.run("INSERT INTO t VALUES (4)") }
+                throw Boom()
+            }
+        }
+        #expect(try db.scalarInt("SELECT COUNT(*) FROM t") == 2)
+    }
+
+    @Test func statementsAreCachedAndEvicted() throws {
+        let db = try memory()
+        try db.exec("CREATE TABLE t (x)")
+        for i in 0..<3 { try db.run("INSERT INTO t VALUES (?)", [i]) }
+        #expect(db.cachedStatementCount == 1)
+        #expect(try db.query("SELECT x FROM t WHERE x > ?", [0]).count == 2)
+        #expect(try db.query("SELECT x FROM t WHERE x > ?", [1]).count == 1)
+        #expect(db.cachedStatementCount == 2)
+        for i in 0..<(SQLiteDB.statementCacheLimit * 2) { _ = try db.scalarInt("SELECT \(i)") }
+        #expect(db.cachedStatementCount == SQLiteDB.statementCacheLimit)
+        #expect(try db.query("SELECT x FROM t WHERE x > ?", [-1]).count == 3)
+        #expect(throws: SQLiteError.self) { try db.query("SELEC broken") }
+        #expect(db.cachedStatementCount == SQLiteDB.statementCacheLimit)
+        try db.exec("DROP TABLE t; CREATE TABLE t (x, y); INSERT INTO t VALUES (9, 9)")
+        #expect(try db.query("SELECT x FROM t WHERE x > ?", [-1]).map { $0.int("x") } == [9])
+    }
+
     @Test func errors() throws {
         let db = try memory()
         let exec = #expect(throws: SQLiteError.self) { try db.exec("NOT SQL") }
@@ -93,7 +135,6 @@ import Testing
         let step = #expect(throws: SQLiteError.self) { try db.run("INSERT INTO t VALUES (1)") }
         #expect(step?.description.contains("UNIQUE") == true)
 
-        // Fails while stepping, after a successful prepare.
         #expect(throws: SQLiteError.self) { try db.query("SELECT abs(-9223372036854775807 - 1)") }
     }
 
@@ -141,14 +182,42 @@ import Testing
         #expect(second.folders().map(\.title) == ["Keep"])
     }
 
-    @Test func upgradesVersionOneDatabases() throws {
+    private func legacyDatabase(version: Int) throws -> URL {
         let dir = temporaryDirectory()
-        let old = try Store(directory: dir)
-        let folder = try old.createFolder(title: "Old")
-        try old.db.exec("DROP TABLE sync_items; PRAGMA user_version = 1")
-        let upgraded = try Store(directory: dir)
-        #expect(try upgraded.db.scalarInt("PRAGMA user_version") == 2)
-        #expect(try upgraded.itemsToUpload().map { $0.row.string("id") } == [folder.id])
+        let db = try SQLiteDB(path: dir.appendingPathComponent("database.sqlite").path)
+        for sql in Schema.migrations.prefix(version) { try db.exec(sql) }
+        try db.exec("PRAGMA user_version = \(version)")
+        try db.run("INSERT INTO folders (id, title, updated_time) VALUES (?, 'Old', 5)", [fixtureId(1)])
+        try db.run("INSERT INTO folders (id, title, updated_time) VALUES (?, 'New', 6)", [fixtureId(2)])
+        if version >= 2 {
+            try db.run("INSERT INTO sync_items (item_id, item_type, sync_time) VALUES (?, 2, 5)", [fixtureId(1)])
+            try db.run("INSERT INTO settings (key, value) VALUES ('sync.delta_cursor', 'c42')")
+        }
+        return dir
+    }
+
+    @Test func upgradesVersionOneDatabases() throws {
+        let upgraded = try Store(directory: try legacyDatabase(version: 1))
+        #expect(try upgraded.db.scalarInt("PRAGMA user_version") == Int64(Schema.version))
+        let ledger = try upgraded.syncLedger(identity: "t")
+        #expect(ledger.cursor == "")
+        #expect(try ledger.itemsToUpload().map(\.id) == [fixtureId(1), fixtureId(2)])
+    }
+
+    @Test func upgradesVersionTwoDatabasesAndAdoptsTheirSyncState() throws {
+        let upgraded = try Store(directory: try legacyDatabase(version: 2))
+        #expect(try upgraded.db.scalarInt("PRAGMA user_version") == Int64(Schema.version))
+        let ledger = try upgraded.syncLedger(identity: "first")
+        #expect(ledger.cursor == "c42")
+        #expect(ledger.syncTime(id: fixtureId(1)) == 5)
+        #expect(try ledger.itemsToUpload().map(\.id) == [fixtureId(2)])
+        #expect(upgraded.setting(Store.legacyCursorKey) == nil)
+
+        let other = try upgraded.syncLedger(identity: "second")
+        #expect(other.target != ledger.target)
+        #expect(other.cursor == "")
+        #expect(other.syncTime(id: fixtureId(1)) == nil)
+        #expect(try upgraded.syncLedger(identity: "first").cursor == "c42")
     }
 
     @Test func tablesMatchSchema() throws {

@@ -58,7 +58,6 @@ import Testing
     }
 
     @Test func wrapTooShortToUnwrap() {
-        // "**" starts and ends with the marker but has nothing inside, so it gets wrapped, not unwrapped.
         let (bridge, tv) = bridge("**", selection: NSRange(location: 0, length: 2))
         bridge.wrap("**", placeholder: "p")
         #expect(tv.string == "******")
@@ -77,7 +76,6 @@ import Testing
         bridge.toggleLinePrefix("1. ")
         #expect(tv.string == "1. one\n2. two\n\nthree\n")
 
-        // Switching block type replaces the old marker.
         tv.setSelectedRange(NSRange(location: 0, length: 0))
         bridge.toggleLinePrefix("# ")
         #expect(tv.string.hasPrefix("# one\n"))
@@ -203,20 +201,17 @@ import Testing
         #expect(!isBold(storage, at: last))
         #expect(h.window.location == 0 && h.window.length < 2_000)
 
-        // Scrolling to the end styles it and returns the start to the base style.
         h.show(NSRange(location: last, length: 3), in: storage)
         #expect(!isBold(storage, at: 2))
         #expect(isBold(storage, at: last))
         h.show(NSRange(location: last - 10, length: 3), in: storage)
         #expect(isBold(storage, at: last))
 
-        // Typing far from the styled part keeps the base style there.
         storage.replaceCharacters(in: NSRange(location: 0, length: 0), with: "**x**")
         h.highlight(storage, edited: NSRange(location: 0, length: 5))
         #expect(!isBold(storage, at: 2))
         #expect(isBold(storage, at: last + 5))
 
-        // An edit range past the end is clamped instead of crashing.
         h.highlight(storage, edited: NSRange(location: 1_000_000, length: 5))
     }
 
@@ -241,7 +236,6 @@ import Testing
         #expect(attr(storage, .foregroundColor, at: "```swift") as? NSColor == .tertiaryLabelColor)
         #expect(attr(storage, .foregroundColor, at: "let v0") as? NSColor == .systemPink)
 
-        // The middle of the block: still code, its comments not headings.
         let middle = ns.range(of: "let v200").location
         h.show(NSRange(location: middle, length: 10), in: storage)
         #expect((storage.attribute(.font, at: middle + 4, effectiveRange: nil) as? NSFont)?.isFixedPitch == true)
@@ -249,14 +243,12 @@ import Testing
         let comment = ns.range(of: "// # not", range: NSRange(location: middle, length: 100)).location
         #expect(storage.attribute(.foregroundColor, at: comment, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
 
-        // The end: the closing fence is dimmed and the text after it is Markdown again.
         let after = ns.range(of: "# After").location
         h.show(NSRange(location: after, length: 3), in: storage)
         let close = ns.range(of: "\n```\n").location + 1
         #expect(storage.attribute(.foregroundColor, at: close, effectiveRange: nil) as? NSColor == .tertiaryLabelColor)
         #expect((storage.attribute(.font, at: after + 2, effectiveRange: nil) as? NSFont)?.pointSize == 21)
 
-        // Long display math.
         let math = "$$\n" + String(repeating: "x + y \\\\\n", count: 300) + "$$\n"
         let ms = NSTextStorage(string: "intro\n" + math + "end")
         h.highlight(ms)
@@ -271,7 +263,6 @@ import Testing
         h.configure(Typography(family: .monospaced, size: 18))
         h.restyle(storage)
         #expect((attr(storage, .font, at: "alpha") as? NSFont)?.pointSize == 18)
-        // A highlighter that has not seen this text styles it from scratch.
         let fresh = MarkdownHighlighter()
         fresh.restyle(storage)
         #expect((attr(storage, .font, at: "alpha") as? NSFont)?.pointSize != 18)

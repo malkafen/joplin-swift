@@ -79,7 +79,6 @@ import Testing
         #expect(token(#""x""#, in: html) == .string)
         #expect(token("disabled", in: html) == .attribute)
         #expect(token("br", in: html) == .tag)
-        // Unterminated constructs end at the end of the text.
         #expect(!tokens("<a href=\"x", "html").isEmpty)
         #expect(token("/* open", in: tokens("/* open", "c")) == .comment)
         #expect(token("<!-- open", in: tokens("<!-- open", "html")) == .comment)
@@ -112,6 +111,24 @@ import Testing
         #expect(MathExtractor.extract("$5 and $10, \\$x\\$").1.isEmpty)
         #expect(MathExtractor.extract("$$\nnever closed").1.isEmpty)
         #expect(MathExtractor.extract("`unclosed $x$").1.isEmpty)
+    }
+
+    @Test func lineHeadsMatchTrimming() {
+        let pieces = ["", " ", "\t", "\u{00A0}", "\u{3000}", "`", "~", "$", "\u{0301}", "x", "\r", "Ж", "😀", "````", "$$"]
+        var rng = SplitMix(state: 7)
+        for _ in 0..<4000 {
+            let line = (0..<Int.random(in: 0...6, using: &rng)).map { _ in pieces.randomElement(using: &rng)! }.joined()
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let fence = trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") ? String(trimmed.prefix(3)) : nil
+            let head = MathExtractor.head(line)
+            #expect(head.fence == fence && (head == .display) == (trimmed == "$$"), "\(line.debugDescription)")
+            let sub = Substring("a\n" + line).dropFirst(2)
+            #expect(MathExtractor.head(sub).fence == fence)
+            let ns = "a\n" + line as NSString
+            #expect(MathExtractor.openFence(in: ns, range: NSRange(location: 2, length: ns.length - 2)) == fence, "\(line.debugDescription)")
+        }
+        #expect(MathExtractor.extract("\u{00A0}$$\nx\n $$\u{3000}\n").1 == [MathExtractor.Formula(tex: "x", display: true)])
+        #expect(MathExtractor.openFence(in: "\u{00A0}~~~\n" as NSString, range: NSRange(location: 0, length: 5)) == "~~~")
     }
 
     @Test func symbolsAndStructures() {
@@ -234,14 +251,12 @@ import Testing
         }
         let body = "# Top\n\n" + (1...30_000).map { "Paragraph \($0) with **bold** text.\n\n" }.joined()
         let (tv, _, coordinator, _) = preview(body)
-        // The start shows at once, the rest when rendered.
         #expect(tv.string.hasPrefix("Top") && tv.string.count < 30_000)
         waitFor { tv.string.hasSuffix("Paragraph 30000 with bold text.") }
         #expect(tv.string.hasSuffix("Paragraph 30000 with bold text."))
         #expect(tv.layoutManager?.allowsNonContiguousLayout == true)
         #expect(tv.usesFindBar && tv.isIncrementalSearchingEnabled)
 
-        // Edits while rendering: only the latest text is shown in the end.
         coordinator.markdown = body + "first edit"
         coordinator.render(keepScroll: true)
         coordinator.markdown = body + "second edit"
@@ -274,7 +289,6 @@ import Testing
         check("Intro\n\n" + body.replacingOccurrences(of: "Paragraph 30 with", with: "Paragraph 30 edited with"))
         check(body.replacingOccurrences(of: "- [ ] task 40\n\n", with: ""))
 
-        // The preview follows a position in the source.
         let target = (body as NSString).range(of: "Paragraph 30 ")
         coordinator.markdown = body
         coordinator.render(keepScroll: true)
@@ -287,7 +301,6 @@ import Testing
         #expect((tv.string as NSString).substring(from: shown).hasPrefix("Paragraph 30"))
     }
 
-    /// Same numbers on every run, so a failing edit can be replayed.
     struct SplitMix: RandomNumberGenerator {
         var state: UInt64
         mutating func next() -> UInt64 {
@@ -299,7 +312,6 @@ import Testing
         }
     }
 
-    /// Random edits rendered as patches must look exactly like a full render.
     @Test(arguments: 1...12) func patchesMatchFullRenders(seed: UInt64) throws {
         let renderer = MarkdownRenderer(baseSize: 14) { _ in nil }
         var markdown = (1...12).map { i in
@@ -327,7 +339,6 @@ import Testing
             let ns = markdown as NSString
             let length = ns.length
             let at = Int.random(in: 0...length, using: &rng)
-            // Whole characters: a range inside an emoji would not be valid text.
             let place = at == length ? length : ns.rangeOfComposedCharacterSequence(at: at).location
             if Bool.random(using: &rng), place < length {
                 let r = ns.rangeOfComposedCharacterSequences(for: NSRange(location: place, length: min(Int.random(in: 1...6, using: &rng), length - place)))
@@ -372,18 +383,15 @@ import Testing
             }
             shown = result
         }
-        // Most edits are patches.
         #expect(patched > 60, "\(patched)")
     }
 
     @Test func patchesLeaveTiedNotesWhole() throws {
         let renderer = MarkdownRenderer(baseSize: 14) { _ in nil }
-        // What ties distant blocks together is rendered whole.
         for tied in ["[toc]\n\n# A\n\nx", "[r]: https://x.test\n\nx", "$$\nx\n$$\n\nx"] {
             let old = MarkdownPreview.Coordinator.rendered(tied, renderer, width: 640)
             #expect(MarkdownPreview.Coordinator.patch(old, to: tied + "y", renderer, width: 640) == nil, "\(tied)")
         }
-        // Equal headings are numbered in order: one more before others renumbers them.
         let numbered = MarkdownPreview.Coordinator.rendered("# A\n\nx\n\ny\n\n# A\n\nz", renderer, width: 640)
         #expect(numbered.headings == ["a", "a-1"])
         #expect(MarkdownPreview.Coordinator.patch(numbered, to: "# A\n\nx\n\ny\n\n# A\n\nzz", renderer, width: 640)?.result.headings == ["a", "a-1"])
@@ -393,7 +401,6 @@ import Testing
         #expect(MarkdownPreview.Coordinator.difference("same", "same") == nil)
         let d = try #require(MarkdownPreview.Coordinator.difference("a😀b", "a😁b"))
         #expect(d.start == 1 && d.oldEnd == 3 && d.newEnd == 3 && d.newLength == 4)
-        // Across the chunks it compares, and with the editor's text (an NSString).
         let long = String(repeating: "abc\n", count: 10_000)
         let edited = NSMutableString(string: long + "yz" + long) as String
         let e = try #require(MarkdownPreview.Coordinator.difference(long + "x" + long, edited))
@@ -403,7 +410,6 @@ import Testing
         #expect("a $x$".quickContains("$") && !"plain".quickContains("$") && !"".quickContains("$"))
         #expect((NSMutableString(string: "a ]: b") as String).quickContains("]:") && !(NSMutableString(string: "a") as String).quickContains("$"))
         #expect(!MarkdownPreview.Coordinator.hasReferenceDefinition("see [a]: b and\n    [code]: x\n[x](y)"))
-        // A large change is shown whole: inserting it into the shown text would take longer.
         let small = MarkdownPreview.Coordinator.rendered("a\n\nb", renderer, width: 640)
         #expect(MarkdownPreview.Coordinator.patch(small, to: "a\n\nb" + String(repeating: "word ", count: 50_000), renderer, width: 640) == nil)
     }
@@ -457,7 +463,7 @@ import Testing
         defer { NotificationCenter.default.removeObserver(token) }
 
         #expect(loader.image(for: good) == nil)
-        #expect(loader.image(for: good) == nil) // already in flight
+        #expect(loader.image(for: good) == nil)
         #expect(loader.image(for: bad) == nil)
         #expect(loader.image(for: URL(string: "ftp://x/y.png")!) == nil)
         for _ in 0..<50 where loader.image(for: good) == nil {
@@ -466,14 +472,13 @@ import Testing
         #expect(loader.image(for: good) != nil)
         #expect(announced == [good])
         try await Task.sleep(for: .milliseconds(100))
-        #expect(loader.image(for: bad) == nil) // failures are not retried
+        #expect(loader.image(for: bad) == nil)
         #expect(Stub.responses.count == 2)
     }
 }
 
 @MainActor
 @Suite struct RendererStressTests {
-    /// Odd and broken input must never crash the renderer.
     @Test func survivesOddInput() {
         let renderer = MarkdownRenderer(baseSize: 14) { _ in nil }
         let samples = [

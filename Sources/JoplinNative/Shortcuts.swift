@@ -2,11 +2,7 @@ import AppKit
 import Carbon.HIToolbox
 import SwiftUI
 
-/// Characters of physical keys. Shortcuts are recorded with the Latin layout macOS itself uses for menu shortcuts
-/// (the current layout when it is ASCII-capable, otherwise the last one used, e.g. "ABC" next to "Russian"): with a
-/// Cyrillic layout active, ⌃⌥L would otherwise be stored as "д" and never match the menu again.
 enum KeyLayout {
-    /// The character of a key in a keyboard layout, unmodified or with Shift.
     static func character(keyCode: UInt16, in source: TISInputSource, shift: Bool = false) -> String? {
         guard let pointer = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData) else { return nil }
         let data = Unmanaged<CFData>.fromOpaque(pointer).takeUnretainedValue() as Data
@@ -24,7 +20,6 @@ enum KeyLayout {
         return s.unicodeScalars.allSatisfy({ $0.properties.isWhitespace || $0.value < 0x20 }) ? nil : s
     }
 
-    /// US ANSI characters, when no layout data is available.
     private static let ansi: [UInt16: String] = [
         0: "a", 1: "s", 2: "d", 3: "f", 4: "h", 5: "g", 6: "z", 7: "x", 8: "c", 9: "v", 11: "b", 12: "q", 13: "w",
         14: "e", 15: "r", 16: "y", 17: "t", 18: "1", 19: "2", 20: "3", 21: "4", 22: "6", 23: "5", 24: "=", 25: "9",
@@ -34,7 +29,6 @@ enum KeyLayout {
         88: "6", 89: "7", 91: "8", 92: "9",
     ]
 
-    /// The key's character in the Latin layout.
     static func latinCharacter(keyCode: UInt16) -> String? {
         if let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
            let c = character(keyCode: keyCode, in: source)?.lowercased(), c.count == 1 {
@@ -43,14 +37,12 @@ enum KeyLayout {
         return ansi[keyCode]
     }
 
-    /// Whether the active layout has no Latin letters (Russian, Greek, Hebrew…).
     static var isNonLatinLayoutActive: Bool {
         guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
               let p = TISGetInputSourceProperty(source, kTISPropertyInputSourceIsASCIICapable) else { return false }
         return !CFBooleanGetValue(Unmanaged<CFBoolean>.fromOpaque(p).takeUnretainedValue())
     }
 
-    /// What the key types in the Latin layout, keeping Shift ("J" for Shift-О on the Russian layout).
     static func latinTyped(keyCode: UInt16, shift: Bool) -> String? {
         guard let source = TISCopyCurrentASCIICapableKeyboardLayoutInputSource()?.takeRetainedValue(),
               let c = character(keyCode: keyCode, in: source, shift: shift), c.unicodeScalars.allSatisfy(\.isASCII) else {
@@ -59,7 +51,6 @@ enum KeyLayout {
         return c
     }
 
-    /// Enabled keyboard layouts without Latin letters (Russian, Greek, Hebrew…).
     static var nonLatinLayouts: [TISInputSource] {
         let filter = [kTISPropertyInputSourceType as String: kTISTypeKeyboardLayout as String] as CFDictionary
         let all = (TISCreateInputSourceList(filter, false)?.takeRetainedValue() as? [TISInputSource]) ?? []
@@ -69,7 +60,6 @@ enum KeyLayout {
         }
     }
 
-    /// The Latin character of the key that types `character` in one of `layouts`.
     static func latinCharacter(for character: String, layouts: [TISInputSource] = nonLatinLayouts) -> String? {
         for source in layouts {
             for code in UInt16(0)..<128 where Self.character(keyCode: code, in: source)?.lowercased() == character {
@@ -80,9 +70,7 @@ enum KeyLayout {
     }
 }
 
-/// A key combination as stored in the defaults ("ctrl+cmd+1", "opt+cmd+left") and shown in menus ("⌃⌘1").
 struct Hotkey: Equatable, Hashable {
-    /// Lowercased character, or a named key: left, right, up, down, return, tab, space, delete, escape, f1…f12.
     var key: String
     var command = false
     var control = false
@@ -99,7 +87,6 @@ struct Hotkey: Equatable, Hashable {
 
     init?(storage: String) {
         var parts = storage.lowercased().split(separator: "+", omittingEmptySubsequences: false).map(String.init)
-        // "cmd++" is the plus key: the separator splits it into two empty parts.
         if parts.count >= 2, parts.suffix(2) == ["", ""] {
             parts.removeLast(2)
             parts.append("+")
@@ -142,7 +129,6 @@ struct Hotkey: Equatable, Hashable {
         return s + (Self.named[key]?.symbol ?? key.uppercased())
     }
 
-    /// 1…12 for "f1"…"f12".
     var functionKeyNumber: Int? {
         guard key.count > 1, key.hasPrefix("f"), let n = Int(key.dropFirst()), (1...12).contains(n) else { return nil }
         return n
@@ -174,8 +160,6 @@ struct Hotkey: Equatable, Hashable {
         109: "f10", 103: "f11", 111: "f12",
     ]
 
-    /// The combination of a key press, or nil for keys that cannot be shortcuts (bare letters, modifiers only).
-    /// Keys are taken by position in the Latin layout, whatever layout is active.
     init?(event: NSEvent) {
         let flags = event.modifierFlags
         let key: String
@@ -190,12 +174,9 @@ struct Hotkey: Equatable, Hashable {
         }
         self.init(key: key, command: flags.contains(.command), control: flags.contains(.control),
                   option: flags.contains(.option), shift: flags.contains(.shift))
-        // Plain characters would stop typing; function keys work alone.
         if !command && !control && !option && functionKeyNumber == nil { return nil }
     }
 
-    /// Earlier versions stored the character of the active layout ("ctrl+opt+д"); such keys never matched a menu
-    /// shortcut. Returns the same combination on the Latin key, or nil when there is nothing to change.
     func latinized(layouts: [TISInputSource] = KeyLayout.nonLatinLayouts) -> Hotkey? {
         guard key.count == 1, !key.unicodeScalars.allSatisfy(\.isASCII),
               let latin = KeyLayout.latinCharacter(for: key, layouts: layouts) else { return nil }
@@ -205,7 +186,6 @@ struct Hotkey: Equatable, Hashable {
     }
 }
 
-/// Menu commands whose shortcuts can be changed in Settings → Shortcuts.
 enum ShortcutAction: String, CaseIterable, Identifiable {
     case editorOnly, split, previewOnly, cycleLayout
 
@@ -231,7 +211,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
 
     var defaultsKey: String { "shortcut.\(rawValue)" }
 
-    /// Fixed shortcuts of other menu commands, to warn about clashes.
     static let reserved: [Hotkey: String] = {
         var r: [Hotkey: String] = [:]
         func add(_ key: String, _ title: String, cmd: Bool = true, ctrl: Bool = false, opt: Bool = false, shift: Bool = false) {
@@ -255,7 +234,6 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     }()
 }
 
-/// Settings row that records a new shortcut: click, press the keys; Esc cancels, ⌫ clears.
 struct ShortcutRecorder: View {
     let action: ShortcutAction
     @Environment(AppModel.self) private var model
@@ -293,7 +271,6 @@ struct ShortcutRecorder: View {
 }
 
 extension View {
-    /// Applies a user-configurable shortcut, or none when it was cleared.
     func keyboardShortcut(_ hotkey: Hotkey?) -> some View {
         keyboardShortcut(hotkey?.keyboardShortcut)
     }

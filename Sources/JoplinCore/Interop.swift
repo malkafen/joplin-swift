@@ -40,10 +40,6 @@ public enum InteropError: Error, CustomStringConvertible {
     }
 }
 
-/// Import/export in Joplin's own formats:
-/// - RAW directory / JEX archive (InteropService_Exporter_Raw / _Jex): "<id>.md" items plus "resources/<id>.<ext>"
-/// - Joplin filesystem sync target: same items, blobs in ".resource/<id>"
-/// - Joplin Desktop profile database (~/.config/joplin-desktop)
 public extension Store {
     static var joplinDesktopProfile: URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/joplin-desktop", isDirectory: true)
@@ -60,7 +56,6 @@ public extension Store {
             for file in files {
                 do {
                     let content = try String(contentsOf: file, encoding: .utf8)
-                    // Only syncable types have a schema, others are rejected by unserialize().
                     let (type, fields) = try Serializer.unserialize(content)
                     if (fields["encryption_applied"] as? Int64 ?? 0) != 0 {
                         report.skippedEncrypted += 1
@@ -94,7 +89,6 @@ public extension Store {
         return try importDirectory(tmp)
     }
 
-    /// Copies notebooks, notes, tags and attachments from a Joplin Desktop profile.
     func importJoplinDesktopProfile(_ profile: URL = Store.joplinDesktopProfile) throws -> ImportReport {
         let dbURL = profile.appendingPathComponent("database.sqlite")
         guard FileManager.default.fileExists(atPath: dbURL.path) else { throw InteropError.notFound(dbURL.path) }
@@ -131,7 +125,6 @@ public extension Store {
         return report
     }
 
-    /// Writes a JEX archive importable by Joplin Desktop/Mobile (File > Import > JEX).
     func exportJEX(to archive: URL, folderId: String? = nil) throws -> Int {
         let fm = FileManager.default
         let tmp = fm.temporaryDirectory.appendingPathComponent("jex-\(Store.newId())", isDirectory: true)
@@ -189,7 +182,7 @@ public extension Store {
         try p.run()
         p.waitUntilExit()
         if p.terminationStatus != 0 {
-            let msg = String(data: err.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
+            let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
             throw InteropError.tarFailed(msg)
         }
     }
@@ -198,7 +191,6 @@ public extension Store {
 public enum MarkdownLinks {
     private static let resourceRegex = try! NSRegularExpression(pattern: ":/([0-9a-fA-F]{32})")
 
-    /// Ids referenced as ":/<id>" (Joplin internal links to notes or resources).
     public static func resourceIds(in body: String) -> [String] {
         resourceRegex.matches(in: body, range: NSRange(body.startIndex..., in: body)).compactMap {
             Range($0.range(at: 1), in: body).map { String(body[$0]).lowercased() }

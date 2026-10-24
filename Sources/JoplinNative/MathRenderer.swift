@@ -1,115 +1,5 @@
 import AppKit
 
-/// Finds `$…$` and `$$…$$` before Markdown parsing, so that `_`, `*` and `\` inside formulas are not taken as
-/// Markdown. Each formula becomes a private-use placeholder; line numbers stay unchanged (checkbox toggling
-/// relies on them).
-enum MathExtractor {
-    static let open: Character = "\u{E000}"
-    static let close: Character = "\u{E001}"
-    static let placeholder = try! NSRegularExpression(pattern: "\u{E000}(\\d+)\u{E001}")
-
-    struct Formula: Equatable {
-        var tex: String
-        var display: Bool
-    }
-
-    private static let inline = try! NSRegularExpression(
-        pattern: #"(?<![\\$\w])\$\$(?=\S)(.+?)(?<=\S)\$\$|(?<![\\$\w])\$(?=[^\s$])([^$\n]*?[^\s\\$])\$(?![\w$])"#)
-
-    static func extract(_ markdown: String) -> (String, [Formula]) {
-        guard markdown.quickContains("$") else { return (markdown, []) }
-        var formulas: [Formula] = []
-        let original = markdown.components(separatedBy: "\n")
-        var lines = original
-        func token(_ tex: String, display: Bool) -> String {
-            formulas.append(Formula(tex: tex, display: display))
-            return "\(open)\(formulas.count - 1)\(close)"
-        }
-        scan(original, display: { i, end in
-            // Display block: "$$" lines around the formula. The formula moves to the first line and the
-            // others become empty, which also separates it from surrounding paragraphs.
-            let tex = original[(i + 1)..<end].joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
-            let indent = String(original[i].prefix { $0 == " " || $0 == "\t" })
-            lines[i] = indent + token(tex, display: true)
-            for j in (i + 1)...end { lines[j] = "" }
-        }, inline: { i in
-            lines[i] = replaceInline(lines[i], token: token)
-        })
-        return (lines.joined(separator: "\n"), formulas)
-    }
-
-    /// The code fence the extraction is inside of after `text`, which starts inside `fence`. The extraction tracks
-    /// fences on its own, a little differently from Markdown.
-    static func openFence(after text: String, from fence: String? = nil) -> String? {
-        scan(text.utf8.split(separator: 10, omittingEmptySubsequences: false).map { Substring($0) }, from: fence)
-    }
-
-    /// Walks the lines as the extraction does: `display` gets the first and last line of each `$$` block, `inline`
-    /// each line outside of code fences and blocks. Returns the fence open at the end.
-    @discardableResult
-    private static func scan<Line: StringProtocol>(_ lines: [Line], from fence: String? = nil, display: (Int, Int) -> Void = { _, _ in },
-                                                   inline: (Int) -> Void = { _ in }) -> String? {
-        var fence = fence
-        var i = 0
-        while i < lines.count {
-            let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
-            if let f = fence {
-                if trimmed.hasPrefix(f) { fence = nil }
-                i += 1
-                continue
-            }
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                fence = String(trimmed.prefix(3))
-                i += 1
-                continue
-            }
-            if trimmed == "$$", let end = lines[(i + 1)...].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "$$" }) {
-                display(i, end)
-                i = end + 1
-                continue
-            }
-            inline(i)
-            i += 1
-        }
-        return fence
-    }
-
-    /// Replaces inline formulas outside of code spans.
-    private static func replaceInline(_ line: String, token: (String, Bool) -> String) -> String {
-        guard line.contains("$") else { return line }
-        var out = ""
-        var rest = Substring(line)
-        while let tick = rest.firstIndex(of: "`") {
-            out += replaceOutsideCode(String(rest[..<tick]), token: token)
-            let run = rest[tick...].prefix { $0 == "`" }
-            let afterRun = rest.index(tick, offsetBy: run.count)
-            if let close = rest[afterRun...].range(of: String(run)) {
-                out += rest[tick..<close.upperBound]
-                rest = rest[close.upperBound...]
-            } else {
-                out += rest[tick...]
-                rest = ""
-            }
-        }
-        return out + replaceOutsideCode(String(rest), token: token)
-    }
-
-    private static func replaceOutsideCode(_ s: String, token: (String, Bool) -> String) -> String {
-        let ns = s as NSString
-        var out = ""
-        var last = 0
-        for m in inline.matches(in: s, range: NSRange(location: 0, length: ns.length)) {
-            out += ns.substring(with: NSRange(location: last, length: m.range.location - last))
-            let display = m.range(at: 1).location != NSNotFound
-            out += token(ns.substring(with: m.range(at: display ? 1 : 2)), display)
-            last = m.range.location + m.range.length
-        }
-        return out + ns.substring(from: last)
-    }
-}
-
-/// Typesets a useful subset of LaTeX math with Unicode symbols and the system's STIX Two Math font: Greek
-/// letters, operators, arrows, fractions, roots, sub- and superscripts, `\mathbb`, `\text` and friends.
 struct MathRenderer {
     var size: CGFloat
     var color: NSColor = .labelColor
@@ -127,8 +17,6 @@ struct MathRenderer {
         emit(parser.parseGroup(until: nil), into: out, scale: 1, baseline: 0)
         return out
     }
-
-    // MARK: Model
 
     indirect enum Node {
         case text(String, italic: Bool)
@@ -170,7 +58,6 @@ struct MathRenderer {
             return nodes
         }
 
-        /// One atom; `argument` atoms of commands and scripts take a single digit, as in `\frac12` or `x^23`.
         mutating func parseAtom(argument: Bool = false) -> Node? {
             while i < chars.count, chars[i] == " " || chars[i] == "\n" { i += 1 }
             guard i < chars.count else { return nil }
@@ -296,8 +183,6 @@ struct MathRenderer {
         }
     }
 
-    // MARK: Output
-
     private func font(_ base: NSFont, scale: CGFloat) -> NSFont {
         NSFont(descriptor: base.fontDescriptor, size: base.pointSize * scale) ?? base
     }
@@ -318,7 +203,6 @@ struct MathRenderer {
         case .text(let s, let italic):
             append(s, italic && !upright ? italicFont : uprightFont, scale: scale, baseline: baseline, into: out)
         case .symbol(let s):
-            // Space around relations and binary operators, as TeX does; none for a leading sign.
             let last = out.string.last
             let leading = last == nil || last == "(" || last == "[" || last == "{" || last == "⁄"
                 || last.map { Self.relations.contains(String($0)) || Self.binary.contains(String($0)) || $0 == "\u{2004}" || $0 == "\u{2005}" } == true
@@ -361,7 +245,6 @@ struct MathRenderer {
         }
     }
 
-    /// Fraction parts and radicands: single atoms stay bare, anything longer gets parentheses.
     private func emitWrapped(_ node: Node, into out: NSMutableAttributedString, scale: CGFloat, baseline: CGFloat,
                              upright: Bool) {
         var simple = true
@@ -374,8 +257,6 @@ struct MathRenderer {
             append(")", mathFont, scale: scale, baseline: baseline, into: out)
         }
     }
-
-    // MARK: Tables
 
     static let functions: Set<String> = [
         "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan", "sinh", "cosh", "tanh", "log", "ln",
@@ -420,7 +301,6 @@ struct MathRenderer {
     enum Alphabet {
         case bold, doubleStruck, script
 
-        /// First capital letter of the alphabet in the Mathematical Alphanumeric Symbols block.
         var base: UInt32 {
             switch self {
             case .bold: return 0x1D400
@@ -429,7 +309,6 @@ struct MathRenderer {
             }
         }
 
-        /// Letters that live in the Letterlike Symbols block instead (their slots above are empty).
         var exceptions: [Character: Character] {
             switch self {
             case .bold: return [:]
