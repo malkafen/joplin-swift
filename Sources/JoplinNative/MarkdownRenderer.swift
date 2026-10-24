@@ -52,7 +52,11 @@ struct MarkdownRenderer {
         self.init(typography: Typography(size: baseSize), resolveResource: resolveResource)
     }
 
-    private static let imageCache = NSCache<NSURL, NSImage>()
+    static let imageCache: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 256
+        return cache
+    }()
 
     static func loadImage(_ url: URL) -> NSImage? {
         if let cached = imageCache.object(forKey: url as NSURL) { return cached }
@@ -61,7 +65,11 @@ struct MarkdownRenderer {
         return image
     }
 
-    private static let diagramCache = NSCache<NSString, NSImage>()
+    static let diagramCache: NSCache<NSString, NSImage> = {
+        let cache = NSCache<NSString, NSImage>()
+        cache.countLimit = 128
+        return cache
+    }()
 
     static func mermaid(_ source: String, fontSize: CGFloat) -> NSImage? {
         let key = "\(fontSize)|\(source)" as NSString

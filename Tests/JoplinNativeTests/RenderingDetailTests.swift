@@ -68,6 +68,12 @@ import Testing
         #expect(!renderer.render("- \\[ ] escaped").string.contains("\u{FFFC}"))
     }
 
+    @Test func imageCachesAreBounded() {
+        #expect(MarkdownRenderer.imageCache.countLimit == 256)
+        #expect(MarkdownRenderer.diagramCache.countLimit == 128)
+        #expect(RemoteImageLoader().cache.countLimit == 256)
+    }
+
     @Test func hardLineBreaksStayLineBreaks() {
         #expect(renderer.render("one\\\ntwo").string == "one\u{2028}two")
         #expect(renderer.render("one  \ntwo").string == "one\u{2028}two")

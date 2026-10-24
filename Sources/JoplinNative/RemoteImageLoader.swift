@@ -5,7 +5,11 @@ final class RemoteImageLoader {
     static let shared = RemoteImageLoader()
     static let didLoad = Notification.Name("JNRemoteImageLoaded")
 
-    nonisolated(unsafe) private let cache = NSCache<NSURL, NSImage>()
+    nonisolated(unsafe) let cache: NSCache<NSURL, NSImage> = {
+        let cache = NSCache<NSURL, NSImage>()
+        cache.countLimit = 256
+        return cache
+    }()
     private var inFlight: Set<URL> = []
     private var failed: Set<URL> = []
     var session: URLSession = .shared
