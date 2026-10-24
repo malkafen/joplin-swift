@@ -291,6 +291,16 @@ import Testing
         #expect(HTMLTokens.pieces("<img src='x' hidden>") == [.tag(name: "img", closing: false, attributes: ["src": "x", "hidden": ""])])
     }
 
+    @Test func htmlBlockEdgesAndLineBreaks() throws {
+        let s = render("- item\n\n  <div>in list<br>   spaced</div>\n\n<div>😀<br><br>  </div>\n\n<div><td>a</td><td>b</td><br><td>c</td></div>")
+        #expect(s.string.contains("in list\u{2028}spaced\n"))
+        #expect(s.string.contains("\n😀\n"))
+        #expect(s.string.hasSuffix("a  b\u{2028}c"))
+        let many = render((0..<500).map { "<div><b>b\($0)</b><br>line</div>" }.joined(separator: "\n\n"))
+        #expect(many.string.components(separatedBy: "\n").count == 500)
+        #expect(many.string.hasSuffix("b499\u{2028}line"))
+    }
+
     @Test func highlightsAndBareLinks() throws {
         let s = render("a ==marked== text, see https://example.com/x and [l](https://l.ink) or mail me@example.com. `==no==`")
         #expect(s.string == "a marked text, see https://example.com/x and l or mail me@example.com. ==no==")
@@ -312,6 +322,12 @@ import Testing
         #expect(tocLink.fragment(percentEncoded: false) == "intro")
         #expect((paragraph(of: "Deep code\n", in: s)?.firstLineHeadIndent ?? 0) > (paragraph(of: "Intro", in: s)?.firstLineHeadIndent ?? 0))
         #expect(render("[toc]").string == "")
+        for toc in ["*[TOC]*", "[[toc]]", "${toc}", " [toc] "] {
+            #expect(renderer.renderDocument(toc + "\n\n# A").hasTOC, "\(toc)")
+        }
+        for text in ["[`toc`]", "[toc] and more", String(repeating: "word ", count: 80) + "[toc]", "[toc]\n[toc]"] {
+            #expect(!renderer.renderDocument(text + "\n\n# A").hasTOC, "\(text)")
+        }
         #expect(MarkdownRenderer.slug("Hello, World — 2!") == "hello-world--2")
     }
 
@@ -331,10 +347,15 @@ import Testing
         #expect(render("```\n```swift\nlet a = $x$\n```").string.contains("let a = $x$"))
         let titled = MarkdownRenderer(baseSize: 14) { _ in nil }.renderDocument("$a$ and $b$\n\n# Area $b^2$")
         #expect(titled.headings == ["area-b2"])
-        #expect(MathExtractor.openFence(after: "text\n```swift\n$x$\n") == "```")
-        #expect(MathExtractor.openFence(after: "~~~\n$$\n```\n$$\n", from: nil) == "~~~")
-        #expect(MathExtractor.openFence(after: "$$\n```\n$$\nx", from: nil) == nil)
-        #expect(MathExtractor.openFence(after: "```\n", from: "```") == nil)
+        func openFence(_ text: String) -> String? {
+            MathExtractor.openFence(in: text as NSString, range: NSRange(location: 0, length: (text as NSString).length))
+        }
+        #expect(openFence("text\n```swift\n$x$\n") == "```")
+        #expect(openFence("~~~\n$$\n```\n$$\n") == "~~~")
+        #expect(openFence("$$\n```\n$$\nx") == nil)
+        #expect(openFence("```\n```\n") == nil)
+        #expect(openFence("") == nil)
+        #expect(MathExtractor.openFence(in: "x\n```\ny" as NSString, range: NSRange(location: 2, length: 4)) == "```")
     }
 
     @Test func respectsBaseSize() throws {

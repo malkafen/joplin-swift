@@ -113,6 +113,24 @@ import Testing
         #expect(MathExtractor.extract("`unclosed $x$").1.isEmpty)
     }
 
+    @Test func lineHeadsMatchTrimming() {
+        let pieces = ["", " ", "\t", "\u{00A0}", "\u{3000}", "`", "~", "$", "\u{0301}", "x", "\r", "Ж", "😀", "````", "$$"]
+        var rng = SplitMix(state: 7)
+        for _ in 0..<4000 {
+            let line = (0..<Int.random(in: 0...6, using: &rng)).map { _ in pieces.randomElement(using: &rng)! }.joined()
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+            let fence = trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") ? String(trimmed.prefix(3)) : nil
+            let head = MathExtractor.head(line)
+            #expect(head.fence == fence && (head == .display) == (trimmed == "$$"), "\(line.debugDescription)")
+            let sub = Substring("a\n" + line).dropFirst(2)
+            #expect(MathExtractor.head(sub).fence == fence)
+            let ns = "a\n" + line as NSString
+            #expect(MathExtractor.openFence(in: ns, range: NSRange(location: 2, length: ns.length - 2)) == fence, "\(line.debugDescription)")
+        }
+        #expect(MathExtractor.extract("\u{00A0}$$\nx\n $$\u{3000}\n").1 == [MathExtractor.Formula(tex: "x", display: true)])
+        #expect(MathExtractor.openFence(in: "\u{00A0}~~~\n" as NSString, range: NSRange(location: 0, length: 5)) == "~~~")
+    }
+
     @Test func symbolsAndStructures() {
         #expect(math("\\alpha + \\beta \\to \\infty") == "α\u{2005}+\u{2005}β\u{2004}→\u{2004}∞")
         #expect(math("-x") == "−x")
