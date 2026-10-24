@@ -134,6 +134,57 @@ struct Flowchart {
         ("{{", "}}", .hexagon), ("(", ")", .round), ("[", "]", .rect), ("{", "}", .diamond), (">", "]", .asymmetric),
     ]
 
+    static func attributes(_ text: Substring) -> ([String: String], Int)? {
+        var attributes: [String: String] = [:]
+        var key = "", value = "", inKey = true, quote: Character?
+        var length = 0
+        func flush() {
+            let k = key.trimmingCharacters(in: .whitespaces).lowercased()
+            if !k.isEmpty { attributes[k] = value.trimmingCharacters(in: .whitespaces) }
+            key = ""
+            value = ""
+            inKey = true
+        }
+        for c in text {
+            length += 1
+            if let q = quote {
+                if c == q { quote = nil } else { value.append(c) }
+                continue
+            }
+            switch c {
+            case "}":
+                flush()
+                return (attributes, length)
+            case "\"", "'" where !inKey:
+                quote = c
+            case ":" where inKey:
+                inKey = false
+            case ",":
+                flush()
+            default:
+                if inKey { key.append(c) } else { value.append(c) }
+            }
+        }
+        return nil
+    }
+
+    static func shape(named name: String) -> Shape {
+        switch name.lowercased() {
+        case "rounded", "event": return .round
+        case "stadium", "terminal", "pill": return .stadium
+        case "circle", "circ", "dbl-circ", "double-circle": return .circle
+        case "diam", "diamond", "decision", "question": return .diamond
+        case "hex", "hexagon", "prepare": return .hexagon
+        case "cyl", "cylinder", "database", "db": return .cylinder
+        case "subproc", "subprocess", "subroutine", "fr-rect", "framed-rectangle": return .subroutine
+        case "lean-r", "lean-l", "lean-right", "lean-left", "in-out", "out-in": return .parallelogram
+        case "flag", "odd": return .asymmetric
+        case "sm-circ", "small-circle", "start": return .start
+        case "fr-circ", "framed-circle", "stop": return .end
+        default: return .rect
+        }
+    }
+
     private static let edgeWithText = try! NSRegularExpression(
         pattern: #"^\s*([<xo]?)(--|==|-\.)(?![->.=])\s*(.+?)\s*(-{2,}|={2,}|\.+-)([>xo]?)(?=[\s\w"(\[{]|$)"#)
     private static let edgePlain = try! NSRegularExpression(pattern: #"^\s*([<xo]?)(-{2,}|={2,}|-\.+-|~{3,})([>xo]?)"#)
@@ -159,6 +210,10 @@ struct Flowchart {
             }
             guard !id.isEmpty else { return nil }
             let rest = String(chars[i...])
+            if rest.hasPrefix("@{"), let (attributes, length) = Self.attributes(rest.dropFirst(2)) {
+                node(id, label: attributes["label"].map(Mermaid.cleanLabel), shape: attributes["shape"].map(Self.shape(named:)))
+                i += 2 + length
+            }
             for s in Self.shapes where rest.hasPrefix(s.open) {
                 let after = rest.dropFirst(s.open.count)
                 if let close = after.range(of: s.close) {
@@ -168,7 +223,7 @@ struct Flowchart {
                     break
                 }
             }
-            if !nodes.contains(where: { $0.id == id }) { node(id) }
+            if node(id: id) == nil { node(id) }
             if String(chars[i...]).hasPrefix(":::") {
                 i += 3
                 while i < chars.count, chars[i] != " " { i += 1 }

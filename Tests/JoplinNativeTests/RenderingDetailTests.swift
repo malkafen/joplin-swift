@@ -53,6 +53,48 @@ import Testing
         #expect(parsed.nodes.map(\.shape) == [.hexagon, .parallelogram, .asymmetric, .cylinder, .subroutine, .circle, .stadium, .diamond])
     }
 
+    @Test func tasksInsideQuotesAreCheckboxes() throws {
+        let doc = renderer.renderDocument("> intro\n>\n> - [ ] open *task*\n> - [x] done\n> - [link](https://a.b)\n> - [y] not a task")
+        var lines: [Int] = []
+        doc.text.enumerateAttribute(.jnCheckbox, in: NSRange(location: 0, length: doc.text.length)) { value, _, _ in
+            if let box = value as? CheckboxLine { lines.append(box.line) }
+        }
+        #expect(lines == [3, 4])
+        #expect(doc.text.string.contains("open task"))
+        #expect(!doc.text.string.contains("[ ]") && !doc.text.string.contains("[x]"))
+        #expect(doc.text.string.contains("[y] not a task"))
+        let done = (doc.text.string as NSString).range(of: "done")
+        #expect(doc.text.attribute(.foregroundColor, at: done.location, effectiveRange: nil) as? NSColor == .secondaryLabelColor)
+        #expect(!renderer.render("- \\[ ] escaped").string.contains("\u{FFFC}"))
+    }
+
+    @Test func hardLineBreaksStayLineBreaks() {
+        #expect(renderer.render("one\\\ntwo").string == "one\u{2028}two")
+        #expect(renderer.render("one  \ntwo").string == "one\u{2028}two")
+        #expect(renderer.render("one\ntwo").string == "one two")
+    }
+
+    @Test func mermaidFrontMatterAndNodeAttributes() throws {
+        let flow = try #require(Mermaid.image("---\ntitle: Flow\nconfig:\n  theme: dark\n---\nflowchart LR\nA --> B"))
+        #expect(flow.size.width > 50)
+        #expect(Mermaid.image("---\ntitle: Broken\n") == nil)
+        let pie = try #require(Mermaid.image("---\ntitle: \"Pets\"\n---\npie\n\"Dogs\" : 3\n\"Cats\" : 2"))
+        let untitled = try #require(Mermaid.image("pie\n\"Dogs\" : 3\n\"Cats\" : 2"))
+        #expect(pie.size.height > untitled.size.height)
+        var chart = Flowchart()
+        _ = chart.parseStatement("A@{ shape: diam, label: \"Is it, really?\" } --> B@{shape: cyl} --> C@{ label: 'Done' }")
+        #expect(chart.nodes.map(\.label) == ["Is it, really?", "B", "Done"])
+        #expect(chart.nodes.map(\.shape) == [.diamond, .cylinder, .rect])
+        #expect(chart.edges.map { "\($0.from)\($0.to)" } == ["AB", "BC"])
+        _ = chart.parseStatement("D@{ shape: hex")
+        #expect(chart.node(id: "D")?.shape == .rect)
+        let names = ["rounded", "stadium", "circle", "diamond", "hex", "cyl", "subproc", "lean-r", "flag", "sm-circ", "fr-circ", "rect", "unknown"]
+        #expect(names.map(Flowchart.shape(named:)) == [.round, .stadium, .circle, .diamond, .hexagon, .cylinder, .subroutine, .parallelogram,
+                                                      .asymmetric, .start, .end, .rect, .rect])
+        let image = try #require(Mermaid.image("flowchart TD\nS@{ shape: start } --> A@{ shape: lean-r, label: In } --> E@{ shape: stop }"))
+        #expect(image.cgImage(forProposedRect: nil, context: nil, hints: nil) != nil)
+    }
+
     @Test func mathCommandsAndAlphabets() {
         func math(_ tex: String) -> String { MathRenderer(size: 14).render(tex).string }
         #expect(math("\\text x") == "x")

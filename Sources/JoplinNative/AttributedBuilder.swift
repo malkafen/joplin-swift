@@ -380,8 +380,8 @@ final class AttributedBuilder {
             var markerStyle = InlineStyle(size: base, color: .secondaryLabelColor)
             var itemColor = b.color
             let prefix = NSMutableAttributedString(string: "\t", attributes: attrs(InlineStyle(size: base)))
-            if let checkbox = item.checkbox {
-                let checked = checkbox == .checked
+            let quoted = item.checkbox == nil && b.inQuote ? quotedTask(item) : nil
+            if let checked = item.checkbox.map({ $0 == .checked }) ?? quoted?.checked {
                 let symbol = checked ? "checkmark.circle.fill" : "circle"
                 let colors: [NSColor] = checked ? [.white, .controlAccentColor] : [.secondaryLabelColor]
                 if let icon = symbolAttachment(symbol, colors: colors, font: font(InlineStyle(size: base * 1.12))) {
@@ -414,8 +414,10 @@ final class AttributedBuilder {
             pendingPrefix = prefix
             pendingIndent = (b.indent, b.indent + step, tabs)
             let itemAfter = loose ? base * 0.6 : base * 0.25
-            for child in item.children {
-                if let p = child as? Paragraph {
+            for (index, child) in item.children.enumerated() {
+                if let quoted, index == 0 {
+                    paragraph(quoted.rest, inner, style: InlineStyle(size: base, color: itemColor), after: itemAfter)
+                } else if let p = child as? Paragraph {
                     paragraph(p.children, inner, style: InlineStyle(size: base, color: itemColor), after: itemAfter)
                 } else {
                     if pendingPrefix != nil, !(child is HTMLBlock) {
@@ -429,6 +431,18 @@ final class AttributedBuilder {
             }
         }
         if b.listDepth == 0 { trimLastParagraphSpacing(to: (base * 0.8).rounded()) }
+    }
+
+    private func quotedTask(_ item: ListItem) -> (checked: Bool, rest: [Markup])? {
+        guard let p = item.child(at: 0) as? Paragraph, let text = p.child(at: 0) as? Markdown.Text else { return nil }
+        let s = text.string
+        guard s.count >= 4, s.hasPrefix("["), s.dropFirst(2).hasPrefix("] "), let mark = s.dropFirst().first, "xX ".contains(mark) else {
+            return nil
+        }
+        var rest = Array(p.children.dropFirst())
+        let after = String(s.dropFirst(4))
+        if !after.isEmpty { rest.insert(Markdown.Text(after), at: 0) }
+        return (mark != " ", rest)
     }
 
     private func table(_ t: Markdown.Table, _ b: BlockStyle) {

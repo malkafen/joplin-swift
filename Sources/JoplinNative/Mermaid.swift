@@ -2,9 +2,16 @@ import AppKit
 
 enum Mermaid {
     static func image(_ source: String, fontSize: CGFloat = 13) -> NSImage? {
-        let lines = source.components(separatedBy: .newlines)
+        var lines = source.components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty && !$0.hasPrefix("%%") }
+        var title = ""
+        if lines.first == "---", let end = lines.dropFirst().firstIndex(of: "---") {
+            for line in lines[1..<end] where line.lowercased().hasPrefix("title:") {
+                title = Mermaid.cleanLabel(String(line.dropFirst(6)))
+            }
+            lines.removeSubrange(0...end)
+        }
         guard let header = lines.first?.lowercased() else { return nil }
         let body = Array(lines.dropFirst())
         let font = NSFont.systemFont(ofSize: fontSize)
@@ -21,7 +28,8 @@ enum Mermaid {
             return diagram.participants.isEmpty ? nil : SequenceLayout(diagram, font: font).image()
         }
         if header.hasPrefix("pie") {
-            let pie = Pie.parse(header: lines[0], lines: body)
+            var pie = Pie.parse(header: lines[0], lines: body)
+            if pie.title.isEmpty { pie.title = title }
             return pie.slices.isEmpty ? nil : pie.image(font: font)
         }
         return nil
