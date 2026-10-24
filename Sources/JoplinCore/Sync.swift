@@ -60,20 +60,20 @@ public final class SyncEngine {
             }
         }
         var report = SyncReport()
+        let outcome: Result<Void, Error>
         do {
             let ledger = try store.syncLedger(identity: client.targetIdentity)
             try await pull(ledger, &report)
             try await pushDeletions(ledger, &report)
             try await push(ledger, &report)
+            outcome = .success(())
         } catch {
-            refresher.cancel()
-            _ = await refresher.result
-            await client.releaseSyncLock(clientId: id)
-            throw error
+            outcome = .failure(error)
         }
         refresher.cancel()
         _ = await refresher.result
         await client.releaseSyncLock(clientId: id)
+        try outcome.get()
         store.setSetting(Self.lastSyncKey, String(Store.now()))
         return report
     }
