@@ -74,6 +74,27 @@ import Testing
         #expect(try store.rows(.noteTag, where: "note_id = ?", [id]).count == 1)
     }
 
+    @Test func lenientQueriesFallBackOnErrors() throws {
+        let store = try makeStore()
+        try store.upsert(.folder, ["title": "no id"])
+        #expect(try store.rows(.folder).isEmpty)
+        #expect(store.rowsOrEmpty("SELECT * FROM missing_table").isEmpty)
+        #expect(store.intOrZero("SELECT nope FROM missing_table") == 0)
+        #expect(store.intOrZero("SELECT 7") == 7)
+        try store.restoreFolder(id: fixtureId(9))
+        #expect(store.noteAndStamp(id: fixtureId(9)) == nil)
+        #expect(store.bodyStamp(id: fixtureId(9)) == nil)
+    }
+
+    @Test func excerptFindsWordsIgnoringCaseAndDiacritics() throws {
+        let store = try makeStore()
+        let filler = String(repeating: "filler ", count: 30)
+        let note = try store.createNote(parentId: "", title: "t", body: "\(filler)Résumé then \(filler)CAFÉ end")
+        let excerpt = store.excerpt(noteId: note.id, around: "cafe resume")
+        #expect(excerpt.hasPrefix("…"))
+        #expect(excerpt.contains("Résumé"))
+    }
+
     @Test func settings() throws {
         let store = try makeStore()
         #expect(store.setting("k") == nil)

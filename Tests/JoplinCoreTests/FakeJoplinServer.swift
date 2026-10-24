@@ -18,6 +18,12 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
     private(set) var requests: [String] = []
     var pageSize = 1000
     var failures: [String: Int] = [:]
+    var supportsBatch = true
+    var rejectedNames: Set<String> = []
+    var batchResponse: Data?
+    var delay: Duration = .zero
+    var omitItemTimes = false
+    private(set) var lastDeltaLimit = 0
 
     init(email: String = "user@example.com", password: String = "secret") {
         self.email = email
@@ -34,6 +40,14 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
 
     func seed(_ name: String, _ content: String) {
         lock.withLock { store(name, Data(content.utf8)) }
+    }
+
+    func seed(_ name: String, data: Data) {
+        lock.withLock { store(name, data) }
+    }
+
+    func removeSilently(_ name: String) {
+        _ = lock.withLock { files.removeValue(forKey: name) }
     }
 
     func remove(_ name: String) {
@@ -72,6 +86,7 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
 
     func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
         if Task.isCancelled { throw URLError(.cancelled) }
+        if delay > .zero { try await Task.sleep(for: delay) }
         let url = request.url!
         let (data, status) = lock.withLock { handle(request, url) }
         let response = HTTPURLResponse(url: url, statusCode: status, httpVersion: "HTTP/1.1", headerFields: nil)!
@@ -115,6 +130,25 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
             return (Data(), 200)
         }
 
+        if path.hasSuffix("/api/batch_items"), method == "PUT", supportsBatch {
+            if let batchResponse { return (batchResponse, 200) }
+            let body = (try? JSONSerialization.jsonObject(with: request.httpBody ?? Data())) as? [String: Any] ?? [:]
+            var results: [String: Any] = [:]
+            for item in body["items"] as? [[String: String]] ?? [] {
+                let name = item["name"] ?? ""
+                let content = item["body"] ?? ""
+                if rejectedNames.contains(name) {
+                    results[name] = ["item": NSNull(), "error": ["message": "Rejected \(name)", "httpCode": 400]]
+                } else if name.hasSuffix(".md"), !content.contains("type_: ") {
+                    results[name] = ["item": NSNull(), "error": "Missing required property: type_"]
+                } else {
+                    store(name, Data(content.utf8))
+                    results[name] = ["item": ["name": name], "error": NSNull()]
+                }
+            }
+            return json(200, ["items": results])
+        }
+
         guard let start = path.range(of: "/api/items/root:/") else { return error(404, "Not found: \(path)") }
         var rest = String(path[start.upperBound...])
         if rest.hasSuffix(":/delta") {
@@ -123,10 +157,12 @@ final class FakeJoplinServer: HTTPTransport, @unchecked Sendable {
             guard cursor >= 0, cursor <= changes.count else {
                 return error(400, "Delta cursor is invalid and the complete data should be resynced", code: "resyncRequired")
             }
-            let end = min(changes.count, cursor + pageSize)
+            let limit = Int(components.queryItems?.first { $0.name == "limit" }?.value ?? "") ?? 200
+            lastDeltaLimit = limit
+            let end = min(changes.count, cursor + min(pageSize, limit))
             let items: [[String: Any]] = changes[cursor..<end].map { c in
                 var item: [String: Any] = ["item_name": c.name, "type": c.type, "updated_time": 0]
-                if c.type != 3 { item["jop_updated_time"] = c.jopUpdatedTime }
+                if c.type != 3, !omitItemTimes { item["jop_updated_time"] = c.jopUpdatedTime }
                 return item
             }
             return json(200, ["items": items, "cursor": String(end), "has_more": end < changes.count])
