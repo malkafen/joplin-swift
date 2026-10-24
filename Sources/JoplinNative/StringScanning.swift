@@ -30,12 +30,13 @@ extension String {
                 i -= 1
             }
             if i == 0 { cut = line ?? end }
+            while cut > 0, cut < bytes.count, bytes[cut] & 0xC0 == 0x80 { cut -= 1 }
             return String(decoding: UnsafeBufferPointer(rebasing: bytes[0..<cut]), as: UTF8.self)
         }) {
             return head
         }
         let ns = self as NSString
         let cut = ns.range(of: "\n\n", options: .backwards, range: NSRange(location: 0, length: limit)).location
-        return ns.substring(to: cut == NSNotFound ? limit : cut)
+        return ns.substring(to: cut == NSNotFound ? ns.rangeOfComposedCharacterSequence(at: limit).location : cut)
     }
 }
