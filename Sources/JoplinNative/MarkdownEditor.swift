@@ -127,20 +127,23 @@ struct MarkdownEditor: NSViewRepresentable {
         configureVim(tv)
         let newTerms = c.searchTerms != highlights
         c.searchTerms = highlights
-        if c.noteId != noteId {
+        guard c.noteId == noteId else {
             load(into: tv, context: context)
-        } else if newTerms {
-            c.revealFirstMatch()
-        } else if c.typography != typography {
+            return
+        }
+        if c.typography != typography {
             c.typography = typography
             c.highlighter.configure(typography)
             tv.typingAttributes = c.highlighter.baseAttributes
             if let storage = tv.textStorage { c.highlighter.restyle(storage) }
-        } else if !text.isLiterally(c.lastText) {
-            c.lastText = text
-            guard !tv.string.isLiterally(text) else { return }
-            c.setText(text, typography: typography, in: tv, selection: tv.selectedRange())
         }
+        if !text.isLiterally(c.lastText) {
+            c.lastText = text
+            if tv.textStorage?.mutableString.isEqual(to: text) != true {
+                c.setText(text, typography: typography, in: tv, selection: tv.selectedRange())
+            }
+        }
+        if newTerms { c.revealFirstMatch() }
     }
 
     @MainActor
