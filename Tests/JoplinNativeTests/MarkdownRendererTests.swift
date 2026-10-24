@@ -291,6 +291,16 @@ import Testing
         #expect(HTMLTokens.pieces("<img src='x' hidden>") == [.tag(name: "img", closing: false, attributes: ["src": "x", "hidden": ""])])
     }
 
+    @Test func htmlBlockEdgesAndLineBreaks() throws {
+        let s = render("- item\n\n  <div>in list<br>   spaced</div>\n\n<div>😀<br><br>  </div>\n\n<div><td>a</td><td>b</td><br><td>c</td></div>")
+        #expect(s.string.contains("in list\u{2028}spaced\n"))
+        #expect(s.string.contains("\n😀\n"))
+        #expect(s.string.hasSuffix("a  b\u{2028}c"))
+        let many = render((0..<500).map { "<div><b>b\($0)</b><br>line</div>" }.joined(separator: "\n\n"))
+        #expect(many.string.components(separatedBy: "\n").count == 500)
+        #expect(many.string.hasSuffix("b499\u{2028}line"))
+    }
+
     @Test func highlightsAndBareLinks() throws {
         let s = render("a ==marked== text, see https://example.com/x and [l](https://l.ink) or mail me@example.com. `==no==`")
         #expect(s.string == "a marked text, see https://example.com/x and l or mail me@example.com. ==no==")

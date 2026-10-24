@@ -7,8 +7,9 @@ extension AttributedBuilder {
         let p = beginParagraph(b)
         let style = InlineStyle(size: base, color: b.color)
         var align: NSTextAlignment = .natural
+        func last() -> unichar? { out.length > p.start ? out.mutableString.character(at: out.length - 1) : nil }
         func lineBreak() {
-            guard out.length > p.start, !out.string.hasSuffix("\u{2028}") else { return }
+            guard let last = last(), last != 0x2028 else { return }
             append("\u{2028}", style)
         }
         for piece in pieces {
@@ -16,7 +17,7 @@ extension AttributedBuilder {
             case .text(var text):
                 if preDepth == 0 {
                     text = text.replacingOccurrences(of: "[ \\t\\r\\n]+", with: " ", options: .regularExpression)
-                    if out.length == p.start || out.string.hasSuffix("\u{2028}") {
+                    if last() ?? 0x2028 == 0x2028 {
                         text = String(text.drop { $0 == " " })
                     }
                 } else {
@@ -42,7 +43,7 @@ extension AttributedBuilder {
                     lineBreak()
                     append("•  ", InlineStyle(size: base, color: .tertiaryLabelColor))
                 case "td", "th":
-                    if !closing, out.length > p.start, !out.string.hasSuffix("\u{2028}") { append("  ", style) }
+                    if !closing, let last = last(), last != 0x2028 { append("  ", style) }
                     if name == "th" { html.apply("b", closing: closing, attributes: [:]) { _ in nil } }
                 default:
                     if !closing, name == "center" || attributes["align"]?.lowercased() == "center" { align = .center }
@@ -55,8 +56,7 @@ extension AttributedBuilder {
             }
         }
         html = HTMLState()
-        while out.length > p.start, let last = out.string.unicodeScalars.last,
-              last == "\u{2028}" || last == " " {
+        while let last = last(), last == 0x2028 || last == 0x20 {
             out.deleteCharacters(in: NSRange(location: out.length - 1, length: 1))
         }
         guard out.length > p.start else { return }
