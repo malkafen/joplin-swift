@@ -237,6 +237,7 @@ final class AppModel {
     @ObservationIgnored var syncTimer: Task<Void, Never>?
     @ObservationIgnored var autoSyncTask: Task<Void, Never>?
     @ObservationIgnored var syncRequestedWhileRunning = false
+    @ObservationIgnored var syncClient: (client: JoplinServerClient, credentials: [String])?
     @ObservationIgnored var autoSyncDelay: Duration = .seconds(10)
     @ObservationIgnored var loadedStamp: (id: String, stamp: Store.BodyStamp)?
     @ObservationIgnored let saveQueue = DispatchQueue(label: "io.github.malkafen.JoplinNative.save", qos: .userInitiated)

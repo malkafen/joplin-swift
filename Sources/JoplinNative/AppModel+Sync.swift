@@ -39,8 +39,7 @@ extension AppModel {
         var again = true
         while again {
             do {
-                let client = try JoplinServerClient(baseURL: syncURL, email: syncEmail, password: syncPassword, transport: syncTransport)
-                let report = try await SyncEngine(store: store, client: client).sync()
+                let report = try await SyncEngine(store: store, client: try currentSyncClient()).sync()
                 lastSyncTime = Store.now()
                 syncFailed = false
                 syncStatus = "Synced \(shortDate(lastSyncTime))"
@@ -57,6 +56,14 @@ extension AppModel {
             again = syncRequestedWhileRunning
             syncRequestedWhileRunning = false
         }
+    }
+
+    func currentSyncClient() throws -> JoplinServerClient {
+        let credentials = [syncURL, syncEmail, syncPassword]
+        if let cached = syncClient, cached.credentials == credentials { return cached.client }
+        let client = try JoplinServerClient(baseURL: syncURL, email: syncEmail, password: syncPassword, transport: syncTransport)
+        syncClient = (client, credentials)
+        return client
     }
 
     func requestSync() {

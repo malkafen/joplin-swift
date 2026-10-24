@@ -121,7 +121,7 @@ import Testing
         #expect(!h.server.itemNames.isEmpty)
     }
 
-        @Test func requestDuringSyncRunsAgain() async throws {
+    @Test func requestDuringSyncRunsAgain() async throws {
         let h = try ModelHarness()
         configure(h.model)
         h.model.requestSync()
@@ -129,8 +129,42 @@ import Testing
         await h.model.syncNow()
         try await waitUntil { !h.model.isSyncing }
         #expect(!h.model.syncFailed)
-        let logins = h.server.requests.filter { $0.hasSuffix("/api/sessions") }.count
-        #expect(logins >= 2)
+        let lockRequests = h.server.requests.filter { $0 == "POST /api/locks" }.count
+        #expect(lockRequests >= 2)
+        #expect(h.server.requests.filter { $0.hasSuffix("/api/sessions") }.count == 1)
+    }
+
+    @Test func clientIsReusedUntilTheCredentialsChange() async throws {
+        let h = try ModelHarness()
+        configure(h.model)
+        func logins() -> Int { h.server.requests.filter { $0.hasSuffix("/api/sessions") }.count }
+        await h.model.syncNow()
+        let first = try #require(h.model.syncClient?.client)
+        await h.model.syncNow()
+        #expect(h.model.syncClient?.client === first)
+        #expect(logins() == 1)
+
+        h.model.syncEmail = "user@example.com"
+        await h.model.syncNow()
+        #expect(h.model.syncClient?.client === first, "setting the same value keeps the client")
+
+        h.model.syncPassword = "wrong"
+        await h.model.syncNow()
+        #expect(h.model.syncFailed)
+        #expect(h.model.syncClient?.client !== first)
+        h.model.syncPassword = "secret"
+        await h.model.syncNow()
+        #expect(!h.model.syncFailed, "\(h.model.syncDetail)")
+        #expect(logins() == 3)
+
+        h.server.expireSessions()
+        await h.model.syncNow()
+        #expect(!h.model.syncFailed, "\(h.model.syncDetail)")
+        #expect(logins() == 4)
+
+        h.model.syncURL = "http://joplin.test:22300/"
+        await h.model.syncNow()
+        #expect(logins() == 5)
     }
 
     @Test func syncSettingsPersist() throws {
