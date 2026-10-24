@@ -179,9 +179,15 @@ extension MarkdownPreview.Coordinator {
         }
         let common = min(o.count, n.count)
         var head = 0
-        while head < common, same(head, head) { head += 1 }
+        while head < common, o[head].source.location == n[head].source.location, same(head, head) { head += 1 }
+        let shift = (n[n.count - 1].source.location - o[o.count - 1].source.location, n[n.count - 1].line - o[o.count - 1].line)
+        func shifted(_ i: Int, _ j: Int) -> Bool {
+            n[j].source.location - o[i].source.location == shift.0 && n[j].line - o[i].line == shift.1
+        }
         var tail = 0
-        while tail < common - head, same(o.count - 1 - tail, n.count - 1 - tail) { tail += 1 }
+        while tail < common - head, shifted(o.count - 1 - tail, n.count - 1 - tail), same(o.count - 1 - tail, n.count - 1 - tail) {
+            tail += 1
+        }
         head = max(0, head - 1)
         tail = max(0, tail - 1)
         let oldStart = o[head].rendered.location, newStart = n[head].rendered.location

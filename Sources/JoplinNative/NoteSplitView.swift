@@ -97,7 +97,7 @@ struct NoteSplitView<Editor: View, Preview: View>: NSViewRepresentable {
                 }
             }
             if visible.minY <= 0 {
-                preview.scroll(toSource: 0, offset: 0)
+                preview.scroll(toSource: 0, offset: preview.textContainerOrigin.y)
                 return
             }
             if visible.maxY >= tv.frame.height - 1 {
