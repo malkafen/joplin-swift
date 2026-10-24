@@ -322,6 +322,12 @@ import Testing
         #expect(tocLink.fragment(percentEncoded: false) == "intro")
         #expect((paragraph(of: "Deep code\n", in: s)?.firstLineHeadIndent ?? 0) > (paragraph(of: "Intro", in: s)?.firstLineHeadIndent ?? 0))
         #expect(render("[toc]").string == "")
+        for toc in ["*[TOC]*", "[[toc]]", "${toc}", " [toc] "] {
+            #expect(renderer.renderDocument(toc + "\n\n# A").hasTOC, "\(toc)")
+        }
+        for text in ["[`toc`]", "[toc] and more", String(repeating: "word ", count: 80) + "[toc]", "[toc]\n[toc]"] {
+            #expect(!renderer.renderDocument(text + "\n\n# A").hasTOC, "\(text)")
+        }
         #expect(MarkdownRenderer.slug("Hello, World — 2!") == "hello-world--2")
     }
 

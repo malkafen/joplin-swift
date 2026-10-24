@@ -14,6 +14,7 @@ final class AttributedBuilder {
     private(set) var headingBases: [String] = []
     var lineOffset = 0
     var symbols: [String: NSAttributedString] = [:]
+    private var fonts: [FontKey: NSFont] = [:]
     var sizedToWidth = false
     private(set) var hasTOC = false
     var headingSlugs: [String] { headings.map(\.slug) }
@@ -58,14 +59,27 @@ final class AttributedBuilder {
         }
     }
 
+    private struct FontKey: Hashable {
+        var size: CGFloat
+        var weight: CGFloat
+        var italic: Bool
+        var code: Bool
+    }
+
     func font(_ s: InlineStyle) -> NSFont {
         let size = s.script != 0 ? s.size * 0.75 : s.size
         let weight: NSFont.Weight = s.bold ? s.weight : .regular
-        if s.code || s.kbd {
+        let key = FontKey(size: size, weight: weight.rawValue, italic: s.italic, code: s.code || s.kbd)
+        if let cached = fonts[key] { return cached }
+        let font: NSFont
+        if key.code {
             let factor: CGFloat = typography.family.isMonospaced ? 1 : 0.9
-            return typography.codeFamily.font(size: size * factor, weight: weight, italic: s.italic)
+            font = typography.codeFamily.font(size: size * factor, weight: weight, italic: s.italic)
+        } else {
+            font = typography.family.font(size: size, weight: weight, italic: s.italic)
         }
-        return typography.family.font(size: size, weight: weight, italic: s.italic)
+        fonts[key] = font
+        return font
     }
 
     func attrs(_ s: InlineStyle, codeBackground: Bool = true) -> [NSAttributedString.Key: Any] {
@@ -485,6 +499,17 @@ final class AttributedBuilder {
     }
 
     private func isTOC(_ p: Paragraph) -> Bool {
+        var budget = 256
+        func fits(_ m: Markup) -> Bool {
+            switch m {
+            case let t as Markdown.Text: budget -= t.string.utf8.count
+            case let c as InlineCode: budget -= c.code.utf8.count + 2
+            case let h as InlineHTML: budget -= h.rawHTML.utf8.count
+            default: budget -= 2
+            }
+            return budget >= 0 && m.children.allSatisfy(fits)
+        }
+        guard p.children.allSatisfy(fits) else { return false }
         let text = p.plainText.trimmingCharacters(in: .whitespaces).lowercased()
         return text == "[toc]" || text == "[[toc]]" || text == "${toc}"
     }

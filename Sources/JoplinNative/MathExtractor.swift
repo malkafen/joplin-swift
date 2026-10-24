@@ -3,6 +3,7 @@ import Foundation
 enum MathExtractor {
     static let open: Character = "\u{E000}"
     static let close: Character = "\u{E001}"
+    static let openMark = String(open)
     static let placeholder = try! NSRegularExpression(pattern: "\u{E000}(\\d+)\u{E001}")
 
     struct Formula: Equatable {
@@ -43,18 +44,18 @@ enum MathExtractor {
         var fence = fence
         var i = 0
         while i < lines.count {
-            let trimmed = lines[i].trimmingCharacters(in: .whitespaces)
+            let line = head(lines[i])
             if let f = fence {
-                if trimmed.hasPrefix(f) { fence = nil }
+                if line.fence == f { fence = nil }
                 i += 1
                 continue
             }
-            if trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") {
-                fence = String(trimmed.prefix(3))
+            if let f = line.fence {
+                fence = f
                 i += 1
                 continue
             }
-            if trimmed == "$$", let end = lines[(i + 1)...].firstIndex(where: { $0.trimmingCharacters(in: .whitespaces) == "$$" }) {
+            if line.display, let end = lines[(i + 1)...].firstIndex(where: { head($0).display }) {
                 display(i, end)
                 i = end + 1
                 continue
@@ -65,8 +66,36 @@ enum MathExtractor {
         return fence
     }
 
+    static func head<Line: StringProtocol>(_ line: Line) -> (fence: String?, display: Bool) {
+        var bytes = line.utf8.makeIterator()
+        var b = bytes.next()
+        while b == 32 || b == 9 { b = bytes.next() }
+        guard let first = b, first == 96 || first == 126 || first == 36 || first >= 0x80 else { return (nil, false) }
+        guard first < 0x80 else { return slowHead(line) }
+        let second = bytes.next(), third = bytes.next()
+        if first != 36 {
+            guard second == first, third == first else { return (nil, false) }
+            if let next = bytes.next(), next >= 0x80 { return slowHead(line) }
+            return (first == 96 ? "```" : "~~~", false)
+        }
+        guard second == 36 else { return (nil, false) }
+        var rest = third
+        while let c = rest {
+            if c >= 0x80 { return slowHead(line) }
+            if c != 32, c != 9 { return (nil, false) }
+            rest = bytes.next()
+        }
+        return (nil, true)
+    }
+
+    private static func slowHead<Line: StringProtocol>(_ line: Line) -> (fence: String?, display: Bool) {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        let fence = trimmed.hasPrefix("```") || trimmed.hasPrefix("~~~") ? String(trimmed.prefix(3)) : nil
+        return (fence, trimmed == "$$")
+    }
+
     private static func replaceInline(_ line: String, token: (String, Bool) -> String) -> String {
-        guard line.contains("$") else { return line }
+        guard line.quickContains("$") else { return line }
         var out = ""
         var rest = Substring(line)
         while let tick = rest.firstIndex(of: "`") {

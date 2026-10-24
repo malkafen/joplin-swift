@@ -58,7 +58,7 @@ extension AttributedBuilder {
     }
 
     func text(_ string: String, _ s: InlineStyle) {
-        guard string.contains(MathExtractor.open) else {
+        guard string.quickContains(MathExtractor.openMark) else {
             highlighted(string, s)
             return
         }
@@ -77,7 +77,7 @@ extension AttributedBuilder {
 
     private func highlighted(_ string: String, _ s: InlineStyle) {
         guard !string.isEmpty else { return }
-        guard string.contains("==") else {
+        guard string.quickContains("==") else {
             linkified(string, s)
             return
         }
@@ -132,7 +132,7 @@ extension AttributedBuilder {
     }
 
     func restoreMath(_ code: String) -> String {
-        guard code.contains(MathExtractor.open) else { return code }
+        guard code.quickContains(MathExtractor.openMark) else { return code }
         let ns = code as NSString
         var outString = ""
         var last = 0
